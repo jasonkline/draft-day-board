@@ -8,7 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "yahoo:auth": "tsx src/yahoo/auth-cli.ts",
+    "yahoo:sync": "tsx src/yahoo/sync.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

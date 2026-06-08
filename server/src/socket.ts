@@ -7,6 +7,7 @@ import type {
 } from "../../shared/types.js";
 import { store, type InternalSession } from "./store.js";
 import { PLAYERS } from "./players.js";
+import { syncPlayerPool } from "./yahoo/sync-core.js";
 
 type IO = Server<ClientToServerEvents, ServerToClientEvents>;
 type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -102,6 +103,25 @@ export function registerSocketHandlers(io: IO): void {
         store.undoLastPick(s);
       })
     );
+
+    socket.on("admin:refreshPlayers", async ({ code, adminToken }, cb) => {
+      const s = store.get(code);
+      if (!s) return cb({ ok: false, error: "Session not found" });
+      if (!store.isAdmin(s, adminToken)) return cb({ ok: false, error: "Not authorized" });
+      // Swapping the pool mid-draft could orphan already-made picks, so only
+      // allow it during setup.
+      if (s.status !== "setup") {
+        return cb({ ok: false, error: "Players can only be refreshed before the draft starts" });
+      }
+      try {
+        const { players } = await syncPlayerPool();
+        // The new pool flows into every snapshot via toPublicState.
+        broadcastState(io, s);
+        cb({ ok: true, count: players.length });
+      } catch (err) {
+        cb({ ok: false, error: errMsg(err) });
+      }
+    });
 
     socket.on("pick:make", ({ code, playerId, adminToken, teamToken }, cb) => {
       const s = store.get(code);

@@ -18,8 +18,8 @@ export function RevealOverlay({ reveal, onDone }: Props) {
     const t1 = setTimeout(() => {
       setPhase("reveal");
       playFanfare();
-    }, 1600);
-    const t2 = setTimeout(onDone, 6600);
+    }, 10000);
+    const t2 = setTimeout(onDone, 20000);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -48,6 +48,17 @@ export function RevealOverlay({ reveal, onDone }: Props) {
             style={{ "--accent": POSITION_COLORS[player.position] } as React.CSSProperties}
           >
             <div className="reveal-overall">PICK&nbsp;{pick.overall}</div>
+            {player.headshotUrl && (
+              <img
+                className="reveal-headshot"
+                src={player.headshotUrl}
+                alt={player.name}
+                // Drop the image (not the layout) if it fails to load.
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            )}
             <div
               className="reveal-pos"
               style={{ background: POSITION_COLORS[player.position] }}

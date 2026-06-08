@@ -8,6 +8,11 @@ client/dist/
 # runtime session persistence
 server/data/
 
+# secrets / env (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
 # logs / misc
 *.log
 .DS_Store

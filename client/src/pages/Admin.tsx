@@ -82,6 +82,20 @@ function SetupView({
 }) {
   const [starting, setStarting] = useState(false);
   const [err, setErr] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState("");
+
+  async function refreshPlayers() {
+    setRefreshing(true);
+    setRefreshMsg("");
+    const ack = await emit("admin:refreshPlayers", { code, adminToken });
+    setRefreshing(false);
+    setRefreshMsg(
+      ack.ok
+        ? `✅ Updated — ${ack.count} players loaded.`
+        : `⚠️ ${ack.error || "Refresh failed"}`
+    );
+  }
 
   const patchConfig = (patch: Partial<DraftConfig>) =>
     emit("admin:updateConfig", { code, adminToken, config: patch });
@@ -242,6 +256,18 @@ function SetupView({
         <section className="card">
           <h2>Share</h2>
           <ShareLinks code={code} />
+        </section>
+
+        <section className="card">
+          <h2>Player Data</h2>
+          <p className="hint">
+            {state.players.length} players loaded. Pull the latest Yahoo rankings,
+            ADP &amp; injuries before you draft.
+          </p>
+          <button className="btn btn-small" onClick={refreshPlayers} disabled={refreshing}>
+            {refreshing ? "Refreshing…" : "↻ Refresh from Yahoo"}
+          </button>
+          {refreshMsg && <p className="hint">{refreshMsg}</p>}
         </section>
       </div>
 

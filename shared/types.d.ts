@@ -19,6 +19,8 @@ export interface Player {
   // Flavorful per-position stat line for the TV reveal/spotlight.
   stats: Record<string, string | number>;
   blurb: string;
+  // Optional player headshot (populated from real data sources like Yahoo).
+  headshotUrl?: string;
 }
 
 export interface Team {
@@ -130,6 +132,10 @@ export interface ClientToServerEvents {
   "admin:undoPick": (
     payload: { code: string; adminToken: string },
     cb: (ack: JoinAck) => void
+  ) => void;
+  "admin:refreshPlayers": (
+    payload: { code: string; adminToken: string },
+    cb: (ack: { ok: boolean; error?: string; count?: number }) => void
   ) => void;
   "pick:make": (
     payload: {

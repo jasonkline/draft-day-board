@@ -8,10 +8,15 @@ import { RevealOverlay } from "../components/RevealOverlay";
 import { playDing, unlockAudio } from "../lib/sound";
 import {
   POSITION_COLORS,
+  POSITION_ORDER,
   absUrl,
   formatStatKey,
+  pickValue,
   playerById,
+  positionRun,
   teamById,
+  teamIdForOverall,
+  teamLogoUrl,
 } from "../lib/util";
 
 export function Board() {
@@ -83,9 +88,29 @@ export function Board() {
   }
 
   const onClockTeam = teamById(state, state.onClockTeamId);
-  const lastPick = state.picks[state.picks.length - 1];
-  const lastPlayer = playerById(state, lastPick?.playerId);
-  const lastTeam = teamById(state, lastPick?.teamId);
+  const onDeckTeam =
+    state.currentOverall != null
+      ? teamById(state, teamIdForOverall(state, state.currentOverall + 1))
+      : undefined;
+  // Most-recent-first feed of the last few picks for the board's right rail.
+  const recentPicks = state.picks
+    .slice(-4)
+    .reverse()
+    .map((pick) => ({
+      pick,
+      player: playerById(state, pick.playerId),
+      team: teamById(state, pick.teamId),
+    }))
+    .filter(
+      (r): r is { pick: typeof r.pick; player: NonNullable<typeof r.player>; team: NonNullable<typeof r.team> } =>
+        Boolean(r.player && r.team)
+    );
+  const [latest, ...earlier] = recentPicks;
+  const latestLogo = latest ? teamLogoUrl(latest.player.nflTeam) : undefined;
+  const latestValue = latest
+    ? pickValue(latest.pick.overall, latest.player.adp, state.teams.length)
+    : null;
+  const run = state.status === "drafting" ? positionRun(state) : null;
 
   return (
     <div className="board">
@@ -100,6 +125,17 @@ export function Board() {
               {state.config.mode === "self" ? "Self-Pick" : "Commissioner"}
             </span>
           </div>
+        </div>
+        <div className="board-legend" aria-label="Position color key">
+          {POSITION_ORDER.map((pos) => (
+            <span key={pos} className="legend-item">
+              <span
+                className="legend-dot"
+                style={{ background: POSITION_COLORS[pos] }}
+              />
+              {pos}
+            </span>
+          ))}
         </div>
         <div className="board-status">
           {state.status === "setup" && <span className="pill">Waiting to start…</span>}
@@ -125,6 +161,20 @@ export function Board() {
         </main>
 
         <aside className="board-side">
+          {run && (
+            <div
+              className="run-banner"
+              style={{
+                borderColor: POSITION_COLORS[run.position],
+                color: POSITION_COLORS[run.position],
+              }}
+            >
+              🔥 {run.position} RUN
+              <span className="run-sub">
+                {run.count} of the last {run.of} picks
+              </span>
+            </div>
+          )}
           {state.status === "drafting" && onClockTeam && (
             <div
               className="onclock-card"
@@ -149,24 +199,81 @@ export function Board() {
                   {String(secondsLeft % 60).padStart(2, "0")}
                 </div>
               )}
+              {onDeckTeam && (
+                <div className="ondeck">
+                  <span className="ondeck-label">ON DECK</span>
+                  <span
+                    className="ondeck-team"
+                    style={{ color: onDeckTeam.avatarColor }}
+                  >
+                    {onDeckTeam.emoji} {onDeckTeam.name}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
-          {lastPlayer && lastTeam && (
+          {latest && (
             <div className="lastpick-card">
               <div className="lastpick-label">LAST PICK</div>
-              <div className="lastpick-overall">
-                #{lastPick.overall} · {lastTeam.emoji} {lastTeam.name}
-              </div>
-              <div className="lastpick-name">{lastPlayer.name}</div>
-              <div
-                className="lastpick-pos"
-                style={{ background: POSITION_COLORS[lastPlayer.position] }}
-              >
-                {lastPlayer.position} · {lastPlayer.nflTeam}
+              <div className="lastpick-hero">
+                <div
+                  className="lp-portrait"
+                  style={{ borderColor: POSITION_COLORS[latest.player.position] }}
+                >
+                  {latest.player.headshotUrl ? (
+                    <img
+                      src={latest.player.headshotUrl}
+                      alt={latest.player.name}
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="lp-portrait-fallback"
+                      style={{ color: POSITION_COLORS[latest.player.position] }}
+                    >
+                      {latest.player.position}
+                    </span>
+                  )}
+                  {latestLogo && (
+                    <img
+                      className="lp-team-logo"
+                      src={latestLogo}
+                      alt={latest.player.nflTeam}
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  )}
+                </div>
+                <div className="lp-hero-info">
+                  <div className="lastpick-overall">
+                    #{latest.pick.overall} · {latest.team.emoji} {latest.team.name}
+                  </div>
+                  <div className="lastpick-name">{latest.player.name}</div>
+                  <div
+                    className="lastpick-pos"
+                    style={{ background: POSITION_COLORS[latest.player.position] }}
+                  >
+                    {latest.player.position} · {latest.player.nflTeam} · Bye{" "}
+                    {latest.player.byeWeek}
+                  </div>
+                  {latestValue && latestValue.kind !== "fair" && (
+                    <div className={`lp-value lp-value-${latestValue.kind}`}>
+                      {latestValue.kind === "steal" ? "💰 STEAL" : "📈 REACH"}
+                      <span className="lp-value-sub">
+                        {latestValue.kind === "steal"
+                          ? `fell ${latestValue.spots} past ADP`
+                          : `${latestValue.spots} picks early`}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="lastpick-stats">
-                {Object.entries(lastPlayer.stats)
+                {Object.entries(latest.player.stats)
                   .slice(0, 4)
                   .map(([k, v]) => (
                     <div key={k} className="lp-stat">
@@ -175,6 +282,62 @@ export function Board() {
                     </div>
                   ))}
               </div>
+
+              {earlier.length > 0 && (
+                <div className="recent-picks">
+                  <div className="recent-label">EARLIER PICKS</div>
+                  {earlier.map(({ pick, player, team }) => {
+                    const logo = teamLogoUrl(player.nflTeam);
+                    return (
+                      <div key={pick.overall} className="recent-row">
+                        <div
+                          className="rp-thumb"
+                          style={{ borderColor: POSITION_COLORS[player.position] }}
+                        >
+                          {player.headshotUrl ? (
+                            <img
+                              src={player.headshotUrl}
+                              alt={player.name}
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
+                            />
+                          ) : logo ? (
+                            <img
+                              src={logo}
+                              alt={player.nflTeam}
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <span style={{ color: POSITION_COLORS[player.position] }}>
+                              {player.position}
+                            </span>
+                          )}
+                        </div>
+                        <div className="rp-info">
+                          <div className="rp-name">{player.name}</div>
+                          <div className="rp-sub">
+                            <span
+                              className="rp-pos"
+                              style={{ color: POSITION_COLORS[player.position] }}
+                            >
+                              {player.position} · {player.nflTeam}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="rp-meta">
+                          <span className="rp-overall">#{pick.overall}</span>
+                          <span className="rp-team" title={team.name}>
+                            {team.emoji}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

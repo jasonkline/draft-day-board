@@ -1,4 +1,11 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Player, PlayerPosition } from "../../shared/types.js";
+
+// Where `npm run yahoo:sync` writes the real player pool. Lives under
+// server/data (gitignored, alongside session persistence).
+export const POOL_FILENAME = "players-yahoo.json";
 
 // A hand-built set of ~50 fake players for the MVP. Names/teams are fictional-ish
 // so we never imply real data. Stats are flavor for the TV reveal spotlight.
@@ -144,4 +151,32 @@ export function buildPlayers(): Player[] {
   });
 }
 
-export const PLAYERS: Player[] = buildPlayers();
+// Load the real Yahoo-sourced pool from disk if it exists; otherwise fall back
+// to the built-in fake dataset. This keeps the server (and all tests) fully
+// offline — the network only happens in the one-off `yahoo:sync` CLI.
+function loadYahooPool(): Player[] | null {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const poolPath = join(__dirname, "..", "data", POOL_FILENAME);
+  if (!existsSync(poolPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(poolPath, "utf8"));
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      console.log(`[players] using Yahoo pool (${parsed.length} players) from ${POOL_FILENAME}`);
+      return parsed as Player[];
+    }
+    console.warn(`[players] ${POOL_FILENAME} was empty or invalid — using built-in dataset`);
+  } catch (err) {
+    console.warn(`[players] failed to read ${POOL_FILENAME}, using built-in dataset:`, err);
+  }
+  return null;
+}
+
+// Exported as `let` so a live refresh (yahoo:sync / admin button) can swap the
+// pool in place. ESM live bindings mean importers see the new array without
+// re-importing. `toPublicState` reads it fresh on every broadcast.
+export let PLAYERS: Player[] = loadYahooPool() ?? buildPlayers();
+
+/** Replace the in-memory player pool (used by the Yahoo sync). */
+export function setPlayers(next: Player[]): void {
+  if (Array.isArray(next) && next.length > 0) PLAYERS = next;
+}
