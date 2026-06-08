@@ -1,0 +1,305 @@
+import { customAlphabet } from "nanoid";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type {
+  DraftConfig,
+  Pick,
+  Player,
+  SessionState,
+  Team,
+} from "../../shared/types.js";
+import { PLAYERS } from "./players.js";
+import { slotForOverall, teamIdForOverall, totalPicks } from "./draft.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__dirname, "..", "data");
+const DATA_FILE = join(DATA_DIR, "sessions.json");
+
+// Unambiguous code alphabet (no 0/O/1/I) for easy reading off a TV / typing on a phone.
+const codeId = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 5);
+const tokenId = customAlphabet(
+  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+  24
+);
+
+const TEAM_COLORS = [
+  "#e63946", "#2a9d8f", "#e9c46a", "#f4a261", "#457b9d", "#9b5de5",
+  "#00bbf9", "#06d6a0", "#ef476f", "#ffd166", "#118ab2", "#8338ec",
+  "#fb5607", "#3a86ff", "#ff006e", "#43aa8b",
+];
+const TEAM_EMOJI = [
+  "🦅", "🐻", "🦁", "🐺", "🦈", "🐉", "🦬", "🐅", "🦏", "🐆",
+  "🦌", "🐗", "🦅", "🐲", "🦂", "🐊",
+];
+
+export interface InternalSession {
+  code: string;
+  adminToken: string;
+  status: SessionState["status"];
+  config: DraftConfig;
+  teams: Team[];
+  draftOrder: string[];
+  picks: Pick[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+function defaultConfig(leagueName: string): DraftConfig {
+  return {
+    leagueName: leagueName || "Fantasy Draft",
+    draftStyle: "snake",
+    mode: "commissioner",
+    rounds: 15,
+    secondsPerPick: 90,
+  };
+}
+
+export class SessionStore {
+  private sessions = new Map<string, InternalSession>();
+  private saveTimer: NodeJS.Timeout | null = null;
+
+  constructor() {
+    this.load();
+  }
+
+  // ---- persistence ----
+  private load(): void {
+    try {
+      if (!existsSync(DATA_FILE)) return;
+      const raw = readFileSync(DATA_FILE, "utf8");
+      const arr = JSON.parse(raw) as InternalSession[];
+      for (const s of arr) this.sessions.set(s.code, s);
+      // eslint-disable-next-line no-console
+      console.log(`[store] loaded ${arr.length} session(s) from disk`);
+    } catch (err) {
+      console.error("[store] failed to load sessions:", err);
+    }
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      try {
+        mkdirSync(DATA_DIR, { recursive: true });
+        writeFileSync(DATA_FILE, JSON.stringify([...this.sessions.values()]));
+      } catch (err) {
+        console.error("[store] failed to save sessions:", err);
+      }
+    }, 250);
+  }
+
+  // ---- lifecycle ----
+  create(leagueName: string, teamNames: string[]): InternalSession {
+    let code = codeId();
+    while (this.sessions.has(code)) code = codeId();
+
+    const names =
+      teamNames.length > 0
+        ? teamNames
+        : Array.from({ length: 10 }, (_, i) => `Team ${i + 1}`);
+
+    const teams: Team[] = names.map((name, i) => ({
+      id: `team-${i + 1}`,
+      name: name.trim() || `Team ${i + 1}`,
+      token: tokenId(),
+      claimed: false,
+      avatarColor: TEAM_COLORS[i % TEAM_COLORS.length],
+      emoji: TEAM_EMOJI[i % TEAM_EMOJI.length],
+    }));
+
+    const now = Date.now();
+    const session: InternalSession = {
+      code,
+      adminToken: tokenId(),
+      status: "setup",
+      config: defaultConfig(leagueName),
+      teams,
+      draftOrder: teams.map((t) => t.id),
+      picks: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.sessions.set(code, session);
+    this.scheduleSave();
+    return session;
+  }
+
+  get(code: string): InternalSession | undefined {
+    return this.sessions.get(code?.toUpperCase?.() ?? code);
+  }
+
+  private touch(s: InternalSession): void {
+    s.updatedAt = Date.now();
+    this.scheduleSave();
+  }
+
+  // ---- derived public state ----
+  toPublicState(s: InternalSession): SessionState {
+    const total = totalPicks(s.teams.length, s.config.rounds);
+    const currentOverall =
+      s.status === "drafting" && s.picks.length < total
+        ? s.picks.length + 1
+        : null;
+    const onClockTeamId =
+      currentOverall != null
+        ? teamIdForOverall(currentOverall, s.draftOrder, s.config.draftStyle)
+        : null;
+    const lastPick = s.picks[s.picks.length - 1];
+    const pickDeadline =
+      currentOverall != null && s.config.secondsPerPick > 0
+        ? (lastPick?.timestamp ?? s.updatedAt) + s.config.secondsPerPick * 1000
+        : null;
+
+    return {
+      code: s.code,
+      status: s.status,
+      config: s.config,
+      teams: s.teams.map(({ token, ...rest }) => rest),
+      draftOrder: s.draftOrder,
+      players: PLAYERS,
+      picks: s.picks,
+      currentOverall,
+      onClockTeamId,
+      pickDeadline,
+      totalPicks: total,
+      updatedAt: s.updatedAt,
+    };
+  }
+
+  // ---- mutations (all return the session or throw) ----
+  updateConfig(s: InternalSession, patch: Partial<DraftConfig>): void {
+    this.assertSetup(s);
+    const next = { ...s.config, ...patch };
+    next.rounds = clamp(Math.round(next.rounds), 1, 30);
+    next.secondsPerPick = clamp(Math.round(next.secondsPerPick), 0, 600);
+    if (next.draftStyle !== "snake" && next.draftStyle !== "linear")
+      next.draftStyle = "snake";
+    if (next.mode !== "commissioner" && next.mode !== "self")
+      next.mode = "commissioner";
+    next.leagueName = (next.leagueName || "Fantasy Draft").slice(0, 60);
+    s.config = next;
+    this.touch(s);
+  }
+
+  updateTeams(s: InternalSession, updates: { id: string; name: string }[]): void {
+    this.assertSetup(s);
+    for (const u of updates) {
+      const team = s.teams.find((t) => t.id === u.id);
+      if (team) team.name = (u.name || team.name).slice(0, 40).trim() || team.name;
+    }
+    this.touch(s);
+  }
+
+  setOrder(s: InternalSession, order: string[]): void {
+    this.assertSetup(s);
+    const ids = new Set(s.teams.map((t) => t.id));
+    const valid =
+      order.length === s.teams.length && order.every((id) => ids.has(id));
+    if (!valid) throw new Error("Invalid draft order");
+    if (new Set(order).size !== order.length)
+      throw new Error("Draft order has duplicates");
+    s.draftOrder = order;
+    this.touch(s);
+  }
+
+  claimTeam(s: InternalSession, teamId: string, existingToken?: string): Team {
+    const team = s.teams.find((t) => t.id === teamId);
+    if (!team) throw new Error("Team not found");
+    // Re-claim with the correct token is always allowed (reconnect / refresh).
+    if (existingToken && existingToken === team.token) {
+      team.claimed = true;
+      this.touch(s);
+      return team;
+    }
+    if (team.claimed) throw new Error("Team already taken");
+    team.claimed = true;
+    this.touch(s);
+    return team;
+  }
+
+  startDraft(s: InternalSession): void {
+    this.assertSetup(s);
+    if (s.teams.length < 2) throw new Error("Need at least 2 teams to draft");
+    s.status = "drafting";
+    this.touch(s);
+  }
+
+  /** Apply a pick. Caller has already authorized the actor. */
+  applyPick(s: InternalSession, playerId: string, actingTeamId: string): Pick {
+    if (s.status !== "drafting") throw new Error("Draft is not active");
+    const total = totalPicks(s.teams.length, s.config.rounds);
+    if (s.picks.length >= total) throw new Error("Draft is complete");
+
+    const overall = s.picks.length + 1;
+    const onClock = teamIdForOverall(
+      overall,
+      s.draftOrder,
+      s.config.draftStyle
+    );
+    if (actingTeamId !== onClock)
+      throw new Error("It is not that team's turn to pick");
+
+    const player = PLAYERS.find((p) => p.id === playerId);
+    if (!player) throw new Error("Unknown player");
+    if (s.picks.some((p) => p.playerId === playerId))
+      throw new Error("Player already drafted");
+
+    const { round, pickInRound } = slotForOverall(overall, s.teams.length);
+    const pick: Pick = {
+      overall,
+      round,
+      pickInRound,
+      teamId: onClock,
+      playerId,
+      timestamp: Date.now(),
+    };
+    s.picks.push(pick);
+    if (s.picks.length >= total) s.status = "complete";
+    this.touch(s);
+    return pick;
+  }
+
+  undoLastPick(s: InternalSession): Pick | null {
+    if (s.picks.length === 0) return null;
+    const pick = s.picks.pop()!;
+    if (s.status === "complete") s.status = "drafting";
+    this.touch(s);
+    return pick;
+  }
+
+  /** Resolve which team a given actor controls, or throw if unauthorized. */
+  authorizeActor(
+    s: InternalSession,
+    overall: number,
+    opts: { adminToken?: string; teamToken?: string }
+  ): string {
+    const onClock = teamIdForOverall(overall, s.draftOrder, s.config.draftStyle);
+    // Commissioner can always pick (and is the only picker in commissioner mode).
+    if (opts.adminToken && opts.adminToken === s.adminToken) return onClock;
+    if (s.config.mode === "self" && opts.teamToken) {
+      const team = s.teams.find((t) => t.token === opts.teamToken);
+      if (!team) throw new Error("Invalid team token");
+      if (team.id !== onClock) throw new Error("It is not your turn to pick");
+      return onClock;
+    }
+    throw new Error("Not authorized to make this pick");
+  }
+
+  isAdmin(s: InternalSession, token?: string): boolean {
+    return !!token && token === s.adminToken;
+  }
+
+  private assertSetup(s: InternalSession): void {
+    if (s.status !== "setup")
+      throw new Error("Draft has already started — setup is locked");
+  }
+}
+
+function clamp(n: number, min: number, max: number): number {
+  if (Number.isNaN(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
+
+export const store = new SessionStore();

@@ -1,0 +1,17 @@
+node_modules/
+*/node_modules/
+
+# build output
+server/dist/
+client/dist/
+
+# runtime session persistence
+server/data/
+
+# logs / misc
+*.log
+.DS_Store
+.vite/
+
+# ts incremental build info
+*.tsbuildinfo

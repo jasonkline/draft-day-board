@@ -1,0 +1,27 @@
+{
+  "name": "draft-day-board",
+  "version": "1.0.0",
+  "private": true,
+  "description": "In-person fantasy football draft board app for draft day — TV board view, commissioner & self-pick modes, dramatic pick reveals.",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm:dev -w server\" \"npm:dev -w client\"",
+    "build": "npm run build -w client && npm run build -w server",
+    "start": "node server/dist/index.js",
+    "test": "npm run test -w server",
+    "test:e2e": "npm run build && node server/test/e2e.mjs",
+    "test:browser": "npm run build && node server/test/browser-smoke.mjs",
+    "screenshots": "npm run build && node server/test/screenshots.mjs",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "playwright": "^1.56.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
