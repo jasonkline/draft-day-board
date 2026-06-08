@@ -131,6 +131,55 @@ async function run() {
     });
     assert(!wrongPick.ok, "pick from wrong team token rejected");
 
+    // ---- NSFW: "hurry the f*** up" heckle ----
+    const hurries = [];
+    board.on("fan:hurryUp", (e) => hurries.push(e));
+    const offClock = state.teams.find((t) => t.id !== onClock0);
+
+    // Disabled by default → rejected.
+    const hurryOff = await emit(admin, "fan:hurryUp", {
+      code,
+      teamToken: tokens[offClock.id],
+    });
+    assert(!hurryOff.ok, "hurry-up rejected when NSFW disabled");
+
+    // Enable NSFW live (mid-draft is allowed for presentation settings).
+    const enable = await emit(admin, "admin:updateConfig", {
+      code,
+      adminToken,
+      config: { nsfw: true },
+    });
+    assert(enable.ok && enable.state.config.nsfw === true, "NSFW enabled live");
+
+    // On-clock team can't heckle itself.
+    const selfHurry = await emit(admin, "fan:hurryUp", {
+      code,
+      teamToken: tokens[onClock0],
+    });
+    assert(!selfHurry.ok, "on-clock team cannot heckle itself");
+
+    // Off-clock team heckles → board receives it, attributed to the sender.
+    const hurry1 = await emit(admin, "fan:hurryUp", {
+      code,
+      teamToken: tokens[offClock.id],
+    });
+    assert(hurry1.ok, "off-clock heckle accepted");
+    await new Promise((r) => setTimeout(r, 60));
+    assert(hurries.length === 1, `board received the heckle (got ${hurries.length})`);
+    assert(
+      hurries[0].from && hurries[0].from.name === offClock.name,
+      "heckle attributed to the sending team"
+    );
+
+    // Rapid second heckle is swallowed by the cooldown (acked, but no new event).
+    const hurry2 = await emit(admin, "fan:hurryUp", {
+      code,
+      teamToken: tokens[offClock.id],
+    });
+    assert(hurry2.ok, "rapid second heckle still acked");
+    await new Promise((r) => setTimeout(r, 60));
+    assert(hurries.length === 1, "cooldown swallowed the rapid second heckle");
+
     // ---- Run the full draft with each on-clock team picking the top available ----
     admin.on("state:update", (s) => (state = s));
     const draftedOrder = [];

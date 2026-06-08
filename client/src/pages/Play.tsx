@@ -158,6 +158,7 @@ function PlayerView({
   const [selected, setSelected] = useState<Player | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [hurryCooldown, setHurryCooldown] = useState(false);
   const secondsLeft = useCountdown(state.pickDeadline);
 
   const myTeam = teamById(state, creds.teamId);
@@ -166,6 +167,20 @@ function PlayerView({
     state.status === "drafting" && state.onClockTeamId === creds.teamId;
   const selfMode = state.config.mode === "self";
   const canPick = isMyTurn && selfMode;
+  // NSFW: off-clock players get a heckle button that takes over the board.
+  const canHeckle =
+    state.config.nsfw &&
+    state.config.hurryUpButton &&
+    state.status === "drafting" &&
+    !isMyTurn;
+
+  async function hurryUp() {
+    setHurryCooldown(true);
+    if (navigator.vibrate) navigator.vibrate([60, 40, 90]);
+    await emit("fan:hurryUp", { code, teamToken: creds.teamToken });
+    // Match the server cooldown so the button re-arms when it can actually fire.
+    setTimeout(() => setHurryCooldown(false), 2600);
+  }
 
   const myRoster = useMemo(
     () =>
@@ -247,6 +262,19 @@ function PlayerView({
             </span>
           )}
         </div>
+      )}
+
+      {canHeckle && (
+        <button
+          className="htfu-btn"
+          onClick={hurryUp}
+          disabled={hurryCooldown}
+        >
+          😤 HURRY THE F#@% UP
+          <small>
+            {hurryCooldown ? "…take a breath…" : "Blast it on the big screen"}
+          </small>
+        </button>
       )}
 
       {err && <div className="toast-error">{err}</div>}

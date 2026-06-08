@@ -35,8 +35,11 @@ export function Admin() {
     };
   }, [upper, adminToken, connected, setState]);
 
-  // Ding on the commissioner device too, for ambience.
-  useReveal(useCallback(() => playDing(), []));
+  // Ding on the commissioner device too, for ambience (respecting the toggles).
+  const chimeOn = !!state?.config.sounds && !!state?.config.announcementSound;
+  useReveal(useCallback(() => {
+    if (chimeOn) playDing();
+  }, [chimeOn]));
 
   if (!adminToken) {
     return (
@@ -269,6 +272,53 @@ function SetupView({
           </button>
           {refreshMsg && <p className="hint">{refreshMsg}</p>}
         </section>
+
+        <details className="card extras-card">
+          <summary className="extras-summary">
+            <span>✨ Additional options</span>
+            <small>Sounds, reveal timing &amp; board display</small>
+          </summary>
+          <div className="extras-body">
+            <div className="extras-group">
+              <h3>
+                Show &amp; sound <span className="tag-live">changeable anytime</span>
+              </h3>
+              <ShowControls cfg={cfg} patch={(p) => void patchConfig(p)} />
+            </div>
+            <div className="divider" />
+            <div className="extras-group">
+              <h3>
+                NSFW <span className="tag-nsfw">18+</span>{" "}
+                <span className="tag-live">changeable anytime</span>
+              </h3>
+              <NsfwControls cfg={cfg} patch={(p) => void patchConfig(p)} />
+            </div>
+            <div className="divider" />
+            <div className="extras-group">
+              <h3>
+                Board display <span className="tag-lock">locks at start</span>
+              </h3>
+              <Switch
+                label="Position-run banner"
+                hint="“🔥 QB RUN” when a position goes hot"
+                checked={cfg.showPositionRuns}
+                onChange={(v) => void patchConfig({ showPositionRuns: v })}
+              />
+              <Switch
+                label="Value badges"
+                hint="STEAL / REACH tags on the last-pick card"
+                checked={cfg.showValueBadges}
+                onChange={(v) => void patchConfig({ showValueBadges: v })}
+              />
+              <Switch
+                label="On-deck indicator"
+                hint="Show which team is up next"
+                checked={cfg.showOnDeck}
+                onChange={(v) => void patchConfig({ showOnDeck: v })}
+              />
+            </div>
+          </div>
+        </details>
       </div>
 
       <div className="admin-startbar">
@@ -325,6 +375,182 @@ function Stepper({
   );
 }
 
+/* ----------------------- ADDITIONAL OPTIONS ----------------------- */
+
+function Switch({
+  label,
+  hint,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className={`switch-row ${disabled ? "switch-disabled" : ""}`}>
+      <span className="switch-text">
+        <span className="switch-label">{label}</span>
+        {hint && <small>{hint}</small>}
+      </span>
+      <button
+        type="button"
+        className={`chip ${checked ? "chip-on" : ""}`}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+      >
+        {checked ? "On" : "Off"}
+      </button>
+    </div>
+  );
+}
+
+/** A compact "label … [– N s +]" duration row, styled like the switch rows. */
+function DurationRow({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  min: number;
+  max: number;
+  disabled?: boolean;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className={`switch-row ${disabled ? "switch-disabled" : ""}`}>
+      <span className="switch-text">
+        <span className="switch-label">{label}</span>
+        {hint && <small>{hint}</small>}
+      </span>
+      <div className="stepper-ctl dur-ctl">
+        <button
+          onClick={() => onChange(Math.max(min, value - 1))}
+          disabled={disabled || value <= min}
+        >
+          –
+        </button>
+        <span className="stepper-val">{value}s</span>
+        <button
+          onClick={() => onChange(Math.min(max, value + 1))}
+          disabled={disabled || value >= max}
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The live-editable show controls. The reveal has two beats — the "pick is in"
+ * announcement and the player-card reveal — each with an independent visual
+ * toggle, sound toggle, and hold duration. A master switch mutes both sounds.
+ */
+function ShowControls({
+  cfg,
+  patch,
+}: {
+  cfg: DraftConfig;
+  patch: (p: Partial<DraftConfig>) => void;
+}) {
+  const soundsOff = !cfg.sounds;
+  return (
+    <>
+      <Switch
+        label="Sounds"
+        hint="Master switch — mutes both cues, leaves the visuals alone"
+        checked={cfg.sounds}
+        onChange={(v) => patch({ sounds: v })}
+      />
+
+      <div className="beat-label">📣 “Pick is in” announcement</div>
+      <Switch
+        label="Show announcement"
+        hint="The “THE PICK IS IN” suspense screen"
+        checked={cfg.announcementVisual}
+        onChange={(v) => patch({ announcementVisual: v })}
+      />
+      <Switch
+        label="Play chime"
+        hint="Ding the moment each pick lands"
+        checked={cfg.announcementSound}
+        disabled={soundsOff}
+        onChange={(v) => patch({ announcementSound: v })}
+      />
+      <DurationRow
+        label="Announcement time"
+        hint="How long the suspense screen holds"
+        value={cfg.announcementSeconds}
+        min={1}
+        max={30}
+        disabled={!cfg.announcementVisual}
+        onChange={(v) => patch({ announcementSeconds: v })}
+      />
+
+      <div className="beat-label">🎉 Player reveal</div>
+      <Switch
+        label="Show reveal card"
+        hint="The dramatic full-screen player card"
+        checked={cfg.revealVisual}
+        onChange={(v) => patch({ revealVisual: v })}
+      />
+      <Switch
+        label="Play fanfare"
+        hint="Triumphant flourish on the reveal"
+        checked={cfg.revealSound}
+        disabled={soundsOff}
+        onChange={(v) => patch({ revealSound: v })}
+      />
+      <DurationRow
+        label="Reveal time"
+        hint="How long the player card holds"
+        value={cfg.revealSeconds}
+        min={3}
+        max={60}
+        disabled={!cfg.revealVisual}
+        onChange={(v) => patch({ revealSeconds: v })}
+      />
+    </>
+  );
+}
+
+/** NSFW rated-R extras. Off by default; each feature gated by the master. */
+function NsfwControls({
+  cfg,
+  patch,
+}: {
+  cfg: DraftConfig;
+  patch: (p: Partial<DraftConfig>) => void;
+}) {
+  return (
+    <>
+      <Switch
+        label="🔞 NSFW features"
+        hint="Rated-R extras for adult leagues. Off by default."
+        checked={cfg.nsfw}
+        onChange={(v) => patch({ nsfw: v })}
+      />
+      <Switch
+        label="“Hurry the f#@% up” button"
+        hint="Off-clock players get a heckle button — animation + audio on the board"
+        checked={cfg.hurryUpButton}
+        disabled={!cfg.nsfw}
+        onChange={(v) => patch({ hurryUpButton: v })}
+      />
+    </>
+  );
+}
+
 /* ----------------------- DRAFT CONTROL ----------------------- */
 
 function DraftView({
@@ -344,6 +570,9 @@ function DraftView({
   const onClockTeam = teamById(state, state.onClockTeamId);
   const isComplete = state.status === "complete";
   const selfMode = state.config.mode === "self";
+
+  const patchConfig = (patch: Partial<DraftConfig>) =>
+    emit("admin:updateConfig", { code, adminToken, config: patch });
 
   async function confirmPick() {
     if (!selected) return;
@@ -419,6 +648,23 @@ function DraftView({
           ↩︎ Undo last pick
         </button>
       </div>
+
+      <details className="card extras-card extras-live">
+        <summary className="extras-summary">
+          <span>🔊 Sound, reveal &amp; NSFW</span>
+          <small>Adjust live — takes effect on the next pick</small>
+        </summary>
+        <div className="extras-body">
+          <ShowControls cfg={state.config} patch={(p) => void patchConfig(p)} />
+          <div className="divider" />
+          <div className="extras-group">
+            <h3>
+              NSFW <span className="tag-nsfw">18+</span>
+            </h3>
+            <NsfwControls cfg={state.config} patch={(p) => void patchConfig(p)} />
+          </div>
+        </div>
+      </details>
 
       {err && <div className="toast-error">{err}</div>}
 

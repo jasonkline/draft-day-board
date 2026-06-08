@@ -53,6 +53,48 @@ describe("session setup", () => {
     expect(() => store.updateConfig(s, { rounds: 10 })).toThrow();
     expect(() => store.setOrder(s, [...s.draftOrder].reverse())).toThrow();
   });
+
+  it("defaults the presentation options on", () => {
+    const { s } = freshSession();
+    expect(s.config.sounds).toBe(true);
+    expect(s.config.announcementVisual).toBe(true);
+    expect(s.config.announcementSound).toBe(true);
+    expect(s.config.announcementSeconds).toBe(6);
+    expect(s.config.revealVisual).toBe(true);
+    expect(s.config.revealSound).toBe(true);
+    expect(s.config.revealSeconds).toBe(10);
+    expect(s.config.showPositionRuns).toBe(true);
+    expect(s.config.showValueBadges).toBe(true);
+    expect(s.config.showOnDeck).toBe(true);
+    // NSFW is opt-in: master off, but its features pre-enabled for when it flips on.
+    expect(s.config.nsfw).toBe(false);
+    expect(s.config.hurryUpButton).toBe(true);
+  });
+
+  it("allows live sound/reveal edits after the draft starts, but locks board display", () => {
+    const { store, s } = freshSession();
+    store.startDraft(s);
+    // Sound, reveal visuals & timing are the "can get annoying" knobs — live.
+    store.updateConfig(s, {
+      sounds: false,
+      revealVisual: false,
+      announcementSeconds: 3,
+    });
+    expect(s.config.sounds).toBe(false);
+    expect(s.config.revealVisual).toBe(false);
+    expect(s.config.announcementSeconds).toBe(3);
+    // Board-display toggles lock with the rest of the rules.
+    expect(() => store.updateConfig(s, { showValueBadges: false })).toThrow(
+      /draft has started/i
+    );
+  });
+
+  it("clamps reveal beat durations to sane ranges", () => {
+    const { store, s } = freshSession();
+    store.updateConfig(s, { announcementSeconds: 999, revealSeconds: 0 });
+    expect(s.config.announcementSeconds).toBe(30);
+    expect(s.config.revealSeconds).toBe(3);
+  });
 });
 
 describe("team claiming (capability security)", () => {

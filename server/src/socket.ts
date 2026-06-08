@@ -4,6 +4,7 @@ import type {
   PickRevealEvent,
   ServerToClientEvents,
   JoinAck,
+  HurryUpFrom,
 } from "../../shared/types.js";
 import { store, type InternalSession } from "./store.js";
 import { PLAYERS } from "./players.js";
@@ -15,6 +16,11 @@ type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
 function room(code: string): string {
   return `session:${code}`;
 }
+
+// Per-session cooldown (ms) so the "hurry up" heckle can't be machine-gunned
+// into overlapping audio/animation chaos on the board.
+const HURRY_COOLDOWN_MS = 2500;
+const lastHurryAt = new Map<string, number>();
 
 function broadcastState(io: IO, s: InternalSession): void {
   io.to(room(s.code)).emit("state:update", store.toPublicState(s));
@@ -156,6 +162,34 @@ export function registerSocketHandlers(io: IO): void {
       } catch (err) {
         cb({ ok: false, error: errMsg(err) });
       }
+    });
+
+    socket.on("fan:hurryUp", ({ code, teamToken }, cb) => {
+      const s = store.get(code);
+      if (!s) return cb({ ok: false, error: "Session not found" });
+      if (s.status !== "drafting") return cb({ ok: false, error: "Draft is not active" });
+      if (!s.config.nsfw || !s.config.hurryUpButton)
+        return cb({ ok: false, error: "Feature not enabled" });
+
+      // Validate + attribute first (so real errors always surface), then gate on
+      // the cooldown. Never let the team currently on the clock heckle itself.
+      const onClock = store.toPublicState(s).onClockTeamId;
+      let from: HurryUpFrom | undefined;
+      if (teamToken) {
+        const team = s.teams.find((t) => t.token === teamToken);
+        if (team && team.id === onClock)
+          return cb({ ok: false, error: "You're on the clock — pick already!" });
+        if (team) from = { name: team.name, emoji: team.emoji, color: team.avatarColor };
+      }
+
+      // Swallow spam within the cooldown window (still ack ok so the phone
+      // doesn't show an error for an over-eager tapper).
+      const now = Date.now();
+      if (now - (lastHurryAt.get(s.code) ?? 0) < HURRY_COOLDOWN_MS) return cb({ ok: true });
+      lastHurryAt.set(s.code, now);
+
+      io.to(room(s.code)).emit("fan:hurryUp", { from });
+      cb({ ok: true });
     });
   });
 }

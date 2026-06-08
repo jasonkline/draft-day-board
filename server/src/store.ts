@@ -52,8 +52,35 @@ function defaultConfig(leagueName: string): DraftConfig {
     mode: "commissioner",
     rounds: 15,
     secondsPerPick: 90,
+    sounds: true,
+    announcementVisual: true,
+    announcementSound: true,
+    announcementSeconds: 6,
+    revealVisual: true,
+    revealSound: true,
+    revealSeconds: 10,
+    showPositionRuns: true,
+    showValueBadges: true,
+    showOnDeck: true,
+    nsfw: false,
+    hurryUpButton: true,
   };
 }
+
+// Presentation settings that may change at any time, even mid-draft (they don't
+// affect draft integrity, only the show). Everything else in DraftConfig locks
+// once the draft starts.
+const LIVE_CONFIG_KEYS = new Set<keyof DraftConfig>([
+  "sounds",
+  "announcementVisual",
+  "announcementSound",
+  "announcementSeconds",
+  "revealVisual",
+  "revealSound",
+  "revealSeconds",
+  "nsfw",
+  "hurryUpButton",
+]);
 
 export class SessionStore {
   private sessions = new Map<string, InternalSession>();
@@ -69,7 +96,12 @@ export class SessionStore {
       if (!existsSync(DATA_FILE)) return;
       const raw = readFileSync(DATA_FILE, "utf8");
       const arr = JSON.parse(raw) as InternalSession[];
-      for (const s of arr) this.sessions.set(s.code, s);
+      for (const s of arr) {
+        // Backfill config fields added after this session was persisted, so the
+        // new presentation toggles don't read as undefined (≈ everything off).
+        s.config = { ...defaultConfig(s.config.leagueName), ...s.config };
+        this.sessions.set(s.code, s);
+      }
       // eslint-disable-next-line no-console
       console.log(`[store] loaded ${arr.length} session(s) from disk`);
     } catch (err) {
@@ -170,7 +202,15 @@ export class SessionStore {
 
   // ---- mutations (all return the session or throw) ----
   updateConfig(s: InternalSession, patch: Partial<DraftConfig>): void {
-    this.assertSetup(s);
+    // Sound & reveal-pacing settings can change anytime; the rest is locked
+    // once the draft is underway.
+    if (s.status !== "setup") {
+      const locked = (Object.keys(patch) as (keyof DraftConfig)[]).filter(
+        (k) => !LIVE_CONFIG_KEYS.has(k)
+      );
+      if (locked.length)
+        throw new Error("Draft has started — only sound & reveal settings can change");
+    }
     const next = { ...s.config, ...patch };
     next.rounds = clamp(Math.round(next.rounds), 1, 30);
     next.secondsPerPick = clamp(Math.round(next.secondsPerPick), 0, 600);
@@ -179,6 +219,18 @@ export class SessionStore {
     if (next.mode !== "commissioner" && next.mode !== "self")
       next.mode = "commissioner";
     next.leagueName = (next.leagueName || "Fantasy Draft").slice(0, 60);
+    next.sounds = Boolean(next.sounds);
+    next.announcementVisual = Boolean(next.announcementVisual);
+    next.announcementSound = Boolean(next.announcementSound);
+    next.announcementSeconds = clamp(Math.round(next.announcementSeconds), 1, 30);
+    next.revealVisual = Boolean(next.revealVisual);
+    next.revealSound = Boolean(next.revealSound);
+    next.revealSeconds = clamp(Math.round(next.revealSeconds), 3, 60);
+    next.showPositionRuns = Boolean(next.showPositionRuns);
+    next.showValueBadges = Boolean(next.showValueBadges);
+    next.showOnDeck = Boolean(next.showOnDeck);
+    next.nsfw = Boolean(next.nsfw);
+    next.hurryUpButton = Boolean(next.hurryUpButton);
     s.config = next;
     this.touch(s);
   }

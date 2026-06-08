@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { PickRevealEvent } from "@shared/types";
-import { emit } from "../lib/socket";
+import type { HurryUpFrom, PickRevealEvent } from "@shared/types";
+import { emit, socket } from "../lib/socket";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
 import { DraftGrid } from "../components/DraftGrid";
 import { RevealOverlay } from "../components/RevealOverlay";
-import { playDing, unlockAudio } from "../lib/sound";
+import { HurryUpOverlay } from "../components/HurryUpOverlay";
+import { playDing, playHurryUp, unlockAudio } from "../lib/sound";
 import {
   POSITION_COLORS,
   POSITION_ORDER,
@@ -41,14 +42,39 @@ export function Board() {
     };
   }, [code, connected, setState]);
 
-  const onReveal = useCallback((e: PickRevealEvent) => {
-    playDing();
-    setQueue((q) => [...q, e]);
-  }, []);
+  const chimeOn = !!state?.config.sounds && !!state?.config.announcementSound;
+  const onReveal = useCallback(
+    (e: PickRevealEvent) => {
+      if (chimeOn) playDing();
+      setQueue((q) => [...q, e]);
+    },
+    [chimeOn]
+  );
   useReveal(onReveal);
 
   const current = queue[0] ?? null;
   const handleDone = useCallback(() => setQueue((q) => q.slice(1)), []);
+
+  // NSFW: an off-clock player demanded the board hurry up — flash the animation
+  // and blast the clip. The key retriggers the CSS animation on each heckle.
+  const [heckle, setHeckle] = useState<{ from?: HurryUpFrom; key: number } | null>(null);
+  const heckleKey = useRef(0);
+  useEffect(() => {
+    const onHurry = (e: { from?: HurryUpFrom }) => {
+      heckleKey.current += 1;
+      setHeckle({ from: e.from, key: heckleKey.current });
+      playHurryUp();
+    };
+    socket.on("fan:hurryUp", onHurry);
+    return () => {
+      socket.off("fan:hurryUp", onHurry);
+    };
+  }, []);
+  useEffect(() => {
+    if (!heckle) return;
+    const t = setTimeout(() => setHeckle(null), 3200);
+    return () => clearTimeout(t);
+  }, [heckle]);
 
   const deadline = state?.pickDeadline ?? null;
   const secondsLeft = useCountdown(deadline);
@@ -110,7 +136,10 @@ export function Board() {
   const latestValue = latest
     ? pickValue(latest.pick.overall, latest.player.adp, state.teams.length)
     : null;
-  const run = state.status === "drafting" ? positionRun(state) : null;
+  const run =
+    state.status === "drafting" && state.config.showPositionRuns
+      ? positionRun(state)
+      : null;
 
   return (
     <div className="board">
@@ -199,7 +228,7 @@ export function Board() {
                   {String(secondsLeft % 60).padStart(2, "0")}
                 </div>
               )}
-              {onDeckTeam && (
+              {onDeckTeam && state.config.showOnDeck && (
                 <div className="ondeck">
                   <span className="ondeck-label">ON DECK</span>
                   <span
@@ -260,7 +289,7 @@ export function Board() {
                     {latest.player.position} · {latest.player.nflTeam} · Bye{" "}
                     {latest.player.byeWeek}
                   </div>
-                  {latestValue && latestValue.kind !== "fair" && (
+                  {state.config.showValueBadges && latestValue && latestValue.kind !== "fair" && (
                     <div className={`lp-value lp-value-${latestValue.kind}`}>
                       {latestValue.kind === "steal" ? "💰 STEAL" : "📈 REACH"}
                       <span className="lp-value-sub">
@@ -365,8 +394,19 @@ export function Board() {
       </div>
 
       {current && (
-        <RevealOverlay key={current.pick.overall} reveal={current} onDone={handleDone} />
+        <RevealOverlay
+          key={current.pick.overall}
+          reveal={current}
+          announcementVisual={state.config.announcementVisual}
+          announcementSeconds={state.config.announcementSeconds}
+          revealVisual={state.config.revealVisual}
+          revealSeconds={state.config.revealSeconds}
+          fanfare={state.config.sounds && state.config.revealSound}
+          onDone={handleDone}
+        />
       )}
+
+      {heckle && <HurryUpOverlay key={heckle.key} from={heckle.from} />}
     </div>
   );
 }

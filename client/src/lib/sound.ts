@@ -17,34 +17,60 @@ function getCtx(): AudioContext | null {
   return ctx;
 }
 
-// The "pick is in" chime, extracted from a screen recording and served as a
-// static asset. Decoded once into an AudioBuffer and played through the same
-// (gesture-unlocked) AudioContext as the procedural sounds.
-const PICK_SOUND_URL = "/sounds/pick.mp3";
-let pickBuffer: AudioBuffer | null = null;
-let pickBufferLoading: Promise<AudioBuffer | null> | null = null;
+// Static audio samples served from /public/sounds, decoded once into
+// AudioBuffers and played through the same (gesture-unlocked) AudioContext as
+// the procedural sounds.
+const PICK_SOUND_URL = "/sounds/pick.mp3"; // "the pick is in" chime
+const HURRY_SOUND_URL = "/sounds/htfu.mp3"; // NSFW "hurry the f*** up" clip
 
-function loadPickSound(c: AudioContext): Promise<AudioBuffer | null> {
-  if (pickBuffer) return Promise.resolve(pickBuffer);
-  if (!pickBufferLoading) {
-    pickBufferLoading = fetch(PICK_SOUND_URL)
+const sampleBuffers = new Map<string, AudioBuffer>();
+const sampleLoading = new Map<string, Promise<AudioBuffer | null>>();
+
+function loadSample(c: AudioContext, url: string): Promise<AudioBuffer | null> {
+  const cached = sampleBuffers.get(url);
+  if (cached) return Promise.resolve(cached);
+  let pending = sampleLoading.get(url);
+  if (!pending) {
+    pending = fetch(url)
       .then((r) => r.arrayBuffer())
       .then((data) => c.decodeAudioData(data))
       .then((buf) => {
-        pickBuffer = buf;
+        sampleBuffers.set(url, buf);
         return buf;
       })
       .catch(() => null);
+    sampleLoading.set(url, pending);
   }
-  return pickBufferLoading;
+  return pending;
+}
+
+/** Play a decoded sample now if ready; otherwise warm it for next time. */
+function playSample(url: string, gain = 0.9): boolean {
+  const c = getCtx();
+  if (!c) return false;
+  if (c.state === "suspended") void c.resume();
+  const buf = sampleBuffers.get(url);
+  if (!buf) {
+    void loadSample(c, url);
+    return false;
+  }
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  const g = c.createGain();
+  g.gain.value = gain;
+  src.connect(g);
+  g.connect(c.destination);
+  src.start();
+  return true;
 }
 
 export function unlockAudio(): void {
   const c = getCtx();
   if (!c) return;
   if (c.state === "suspended") void c.resume();
-  // Warm the cache so the first pick plays the real sample, not the fallback.
-  void loadPickSound(c);
+  // Warm the caches so the first play uses the real sample, not a fallback.
+  void loadSample(c, PICK_SOUND_URL);
+  void loadSample(c, HURRY_SOUND_URL);
 }
 
 function tone(
@@ -73,24 +99,17 @@ function tone(
 
 /** Plays the extracted sample announcing a pick is in. */
 export function playDing(): void {
+  // Real sample if decoded; otherwise a procedural ding while it loads.
+  if (playSample(PICK_SOUND_URL)) return;
   const c = getCtx();
   if (!c) return;
-  if (c.state === "suspended") void c.resume();
-  if (pickBuffer) {
-    const src = c.createBufferSource();
-    src.buffer = pickBuffer;
-    const g = c.createGain();
-    g.gain.value = 0.9;
-    src.connect(g);
-    g.connect(c.destination);
-    src.start();
-    return;
-  }
-  // Sample not decoded yet — fall back to the procedural ding and kick off
-  // the load so the next pick uses the real sound.
-  void loadPickSound(c);
   tone(c, 880, 0, 0.18, 0.3, "triangle");
   tone(c, 1318.5, 0.12, 0.3, 0.28, "triangle");
+}
+
+/** Plays the NSFW "hurry the f*** up" clip (no fallback — it's the whole joke). */
+export function playHurryUp(): void {
+  playSample(HURRY_SOUND_URL, 1.0);
 }
 
 /** A short triumphant fanfare for the dramatic reveal. */

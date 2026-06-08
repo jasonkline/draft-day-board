@@ -43,6 +43,43 @@ export interface DraftConfig {
   mode: DraftMode;
   rounds: number;
   secondsPerPick: number; // 0 = no timer
+
+  // ---- Presentation & extras (additional options) ----
+  // The reveal-show settings below are editable live during the draft (it's the
+  // stuff that can get annoying); the board-display group locks at start like
+  // the core rules.
+  //
+  // The big-screen reveal has two beats, each an independent visual + sound:
+  //   1. the "THE PICK IS IN" announcement (suspense), and
+  //   2. the player-card reveal (the payoff).
+  // Sound toggles only affect audio; visual toggles only affect the on-screen
+  // beat. Each sound also obeys the master `sounds` switch.
+
+  sounds: boolean; // master switch over both cue sounds
+
+  announcementVisual: boolean; // show the "THE PICK IS IN" screen
+  announcementSound: boolean; // play the chime when a pick lands
+  announcementSeconds: number; // how long the announcement holds
+
+  revealVisual: boolean; // show the dramatic full-screen player card
+  revealSound: boolean; // play the fanfare on the card reveal
+  revealSeconds: number; // how long the reveal card holds
+
+  // Board display elements — lock at start.
+  showPositionRuns: boolean; // "🔥 QB RUN" banner on the board rail
+  showValueBadges: boolean; // STEAL / REACH badges on the last-pick card
+  showOnDeck: boolean; // the "ON DECK" next-team indicator
+
+  // ---- NSFW (rated-R extras for adult leagues) — live-editable, off by default ----
+  nsfw: boolean; // master switch for all rated-R features
+  hurryUpButton: boolean; // "hurry the f*** up" heckle button for off-clock players
+}
+
+// Who fired off a heckle (slim, token-free) for the board to display.
+export interface HurryUpFrom {
+  name: string;
+  emoji: string;
+  color: string;
 }
 
 export interface Pick {
@@ -101,7 +138,8 @@ export interface PickRevealEvent {
 // Client -> server events
 export interface ClientToServerEvents {
   "session:create": (
-    payload: { config: DraftConfig; teamNames: string[] },
+    // config is applied as a patch over server defaults, so a partial is fine.
+    payload: { config: Partial<DraftConfig>; teamNames: string[] },
     cb: (ack: JoinAck) => void
   ) => void;
   "session:watch": (payload: { code: string }, cb: (ack: JoinAck) => void) => void;
@@ -147,10 +185,18 @@ export interface ClientToServerEvents {
     },
     cb: (ack: { ok: boolean; error?: string }) => void
   ) => void;
+  // NSFW: an off-clock player heckles whoever is on the clock. teamToken is
+  // optional and used only to attribute the heckle on the board.
+  "fan:hurryUp": (
+    payload: { code: string; teamToken?: string },
+    cb: (ack: { ok: boolean; error?: string }) => void
+  ) => void;
 }
 
 // Server -> client events
 export interface ServerToClientEvents {
   "state:update": (state: SessionState) => void;
   "pick:reveal": (event: PickRevealEvent) => void;
+  // Fire the "hurry the f*** up" animation + audio on the board.
+  "fan:hurryUp": (event: { from?: HurryUpFrom }) => void;
 }

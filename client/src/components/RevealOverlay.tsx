@@ -5,28 +5,54 @@ import { playFanfare } from "../lib/sound";
 
 interface Props {
   reveal: PickRevealEvent;
+  /** Show the "THE PICK IS IN" suspense screen, and for how long (seconds). */
+  announcementVisual: boolean;
+  announcementSeconds: number;
+  /** Show the dramatic player-card reveal, and for how long (seconds). */
+  revealVisual: boolean;
+  revealSeconds: number;
+  /** Whether the reveal fanfare should play (master + fanfare toggles). */
+  fanfare: boolean;
   onDone: () => void;
 }
 
-type Phase = "incoming" | "reveal";
+type Phase = "incoming" | "reveal" | "hidden";
 
-export function RevealOverlay({ reveal, onDone }: Props) {
-  const [phase, setPhase] = useState<Phase>("incoming");
+export function RevealOverlay({
+  reveal,
+  announcementVisual,
+  announcementSeconds,
+  revealVisual,
+  revealSeconds,
+  fanfare,
+  onDone,
+}: Props) {
+  const announceMs = announcementVisual ? announcementSeconds * 1000 : 0;
+  const revealMs = revealVisual ? revealSeconds * 1000 : 0;
+  const [phase, setPhase] = useState<Phase>(
+    announceMs > 0 ? "incoming" : revealVisual ? "reveal" : "hidden"
+  );
 
   useEffect(() => {
-    setPhase("incoming");
-    const t1 = setTimeout(() => {
-      setPhase("reveal");
-      playFanfare();
-    }, 10000);
-    const t2 = setTimeout(onDone, 20000);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [reveal, onDone]);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    // The announcement beat (if shown) leads; otherwise we go straight to the
+    // payoff. The fanfare fires when the card would appear, regardless of
+    // whether the card itself is shown — sound and visual toggle separately.
+    if (announceMs > 0) setPhase("incoming");
+    timers.push(
+      setTimeout(() => {
+        setPhase(revealVisual ? "reveal" : "hidden");
+        if (fanfare) playFanfare();
+      }, announceMs)
+    );
+    timers.push(setTimeout(onDone, announceMs + revealMs));
+    return () => timers.forEach(clearTimeout);
+  }, [reveal, onDone, announceMs, revealMs, revealVisual, fanfare]);
 
   const { player, team, pick } = reveal;
+
+  // No visual beat enabled — the overlay is just a sound/timing controller.
+  if (phase === "hidden") return null;
 
   return (
     <div className="reveal-backdrop">
