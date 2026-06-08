@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { HurryUpFrom, PickRevealEvent } from "@shared/types";
+import type { HeckleFrom, HeckleKind, PickRevealEvent } from "@shared/types";
 import { emit, socket } from "../lib/socket";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
 import { DraftGrid } from "../components/DraftGrid";
 import { RevealOverlay } from "../components/RevealOverlay";
-import { HurryUpOverlay } from "../components/HurryUpOverlay";
-import { playDing, playHurryUp, unlockAudio } from "../lib/sound";
+import { HeckleOverlay } from "../components/HeckleOverlay";
+import { playDing, playHeckle, unlockAudio } from "../lib/sound";
 import {
   POSITION_COLORS,
   POSITION_ORDER,
@@ -55,19 +55,21 @@ export function Board() {
   const current = queue[0] ?? null;
   const handleDone = useCallback(() => setQueue((q) => q.slice(1)), []);
 
-  // NSFW: an off-clock player demanded the board hurry up — flash the animation
-  // and blast the clip. The key retriggers the CSS animation on each heckle.
-  const [heckle, setHeckle] = useState<{ from?: HurryUpFrom; key: number } | null>(null);
+  // NSFW: an off-clock player heckled the board — flash the animation and blast
+  // the clip. The key retriggers the CSS animation on each heckle.
+  const [heckle, setHeckle] = useState<
+    { kind: HeckleKind; from?: HeckleFrom; key: number } | null
+  >(null);
   const heckleKey = useRef(0);
   useEffect(() => {
-    const onHurry = (e: { from?: HurryUpFrom }) => {
+    const onHeckle = (e: { kind: HeckleKind; from?: HeckleFrom }) => {
       heckleKey.current += 1;
-      setHeckle({ from: e.from, key: heckleKey.current });
-      playHurryUp();
+      setHeckle({ kind: e.kind, from: e.from, key: heckleKey.current });
+      playHeckle(e.kind);
     };
-    socket.on("fan:hurryUp", onHurry);
+    socket.on("fan:heckle", onHeckle);
     return () => {
-      socket.off("fan:hurryUp", onHurry);
+      socket.off("fan:heckle", onHeckle);
     };
   }, []);
   useEffect(() => {
@@ -406,7 +408,9 @@ export function Board() {
         />
       )}
 
-      {heckle && <HurryUpOverlay key={heckle.key} from={heckle.from} />}
+      {heckle && (
+        <HeckleOverlay key={heckle.key} kind={heckle.kind} from={heckle.from} />
+      )}
     </div>
   );
 }

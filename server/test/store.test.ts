@@ -69,6 +69,7 @@ describe("session setup", () => {
     // NSFW is opt-in: master off, but its features pre-enabled for when it flips on.
     expect(s.config.nsfw).toBe(false);
     expect(s.config.hurryUpButton).toBe(true);
+    expect(s.config.bruhButton).toBe(true);
   });
 
   it("allows live sound/reveal edits after the draft starts, but locks board display", () => {

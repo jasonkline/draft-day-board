@@ -372,7 +372,12 @@ details[open] .extras-summary::before {
   border: 1px solid rgba(255, 0, 60, 0.4);
 }
 
-/* ---------- NSFW: hurry-the-f***-up ---------- */
+/* ---------- NSFW: heckle buttons + board takeover ---------- */
+.heckle-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .htfu-btn {
   width: 100%;
   display: flex;
@@ -414,6 +419,23 @@ details[open] .extras-summary::before {
   }
   50% {
     box-shadow: 0 6px 30px rgba(255, 0, 60, 0.7);
+  }
+}
+/* The "bruh… you stupid" button — purple to set it apart from the red one. */
+.htfu-btn-bruh {
+  background: linear-gradient(180deg, #9b5de5, #6320b0);
+  box-shadow: 0 6px 18px rgba(155, 93, 229, 0.35);
+  animation: htfu-btn-pulse-bruh 1.4s ease-in-out infinite;
+}
+.htfu-btn-bruh:disabled {
+  background: #3a2a52;
+}
+@keyframes htfu-btn-pulse-bruh {
+  0%, 100% {
+    box-shadow: 0 6px 18px rgba(155, 93, 229, 0.35);
+  }
+  50% {
+    box-shadow: 0 6px 30px rgba(155, 93, 229, 0.7);
   }
 }
 
@@ -534,6 +556,20 @@ details[open] .extras-summary::before {
   100% {
     opacity: 0.55;
   }
+}
+/* "bruh" board takeover — purple "you're an idiot" treatment vs. the red one. */
+.htfu-bruh {
+  background: radial-gradient(
+    circle at center,
+    rgba(131, 56, 236, 0.34),
+    rgba(0, 0, 0, 0.66)
+  );
+}
+.htfu-bruh .htfu-text {
+  text-shadow: 0 0 28px #9b5de5, 0 6px 0 #4a157f, 0 10px 24px rgba(0, 0, 0, 0.5);
+}
+.htfu-bruh .htfu-text-big {
+  text-shadow: 0 0 34px #9b5de5;
 }
 
 /* ---------- steppers ---------- */

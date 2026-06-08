@@ -73,10 +73,14 @@ export interface DraftConfig {
   // ---- NSFW (rated-R extras for adult leagues) — live-editable, off by default ----
   nsfw: boolean; // master switch for all rated-R features
   hurryUpButton: boolean; // "hurry the f*** up" heckle button for off-clock players
+  bruhButton: boolean; // "bruh… you stupid" heckle button for off-clock players
 }
 
+// The NSFW heckle buttons an off-clock player can fire at the board.
+export type HeckleKind = "hurryUp" | "bruh";
+
 // Who fired off a heckle (slim, token-free) for the board to display.
-export interface HurryUpFrom {
+export interface HeckleFrom {
   name: string;
   emoji: string;
   color: string;
@@ -187,8 +191,8 @@ export interface ClientToServerEvents {
   ) => void;
   // NSFW: an off-clock player heckles whoever is on the clock. teamToken is
   // optional and used only to attribute the heckle on the board.
-  "fan:hurryUp": (
-    payload: { code: string; teamToken?: string },
+  "fan:heckle": (
+    payload: { code: string; kind: HeckleKind; teamToken?: string },
     cb: (ack: { ok: boolean; error?: string }) => void
   ) => void;
 }
@@ -197,6 +201,6 @@ export interface ClientToServerEvents {
 export interface ServerToClientEvents {
   "state:update": (state: SessionState) => void;
   "pick:reveal": (event: PickRevealEvent) => void;
-  // Fire the "hurry the f*** up" animation + audio on the board.
-  "fan:hurryUp": (event: { from?: HurryUpFrom }) => void;
+  // Fire the heckle animation + audio (by kind) on the board.
+  "fan:heckle": (event: { kind: HeckleKind; from?: HeckleFrom }) => void;
 }

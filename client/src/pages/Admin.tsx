@@ -547,6 +547,13 @@ function NsfwControls({
         disabled={!cfg.nsfw}
         onChange={(v) => patch({ hurryUpButton: v })}
       />
+      <Switch
+        label="“Bruh… you stupid” button"
+        hint="A second heckle button — “bruhh” then “you stupid” over its own animation"
+        checked={cfg.bruhButton}
+        disabled={!cfg.nsfw}
+        onChange={(v) => patch({ bruhButton: v })}
+      />
     </>
   );
 }

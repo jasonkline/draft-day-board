@@ -21,7 +21,11 @@ function getCtx(): AudioContext | null {
 // AudioBuffers and played through the same (gesture-unlocked) AudioContext as
 // the procedural sounds.
 const PICK_SOUND_URL = "/sounds/pick.mp3"; // "the pick is in" chime
-const HURRY_SOUND_URL = "/sounds/htfu.mp3"; // NSFW "hurry the f*** up" clip
+// NSFW heckle clips, keyed by HeckleKind.
+const HECKLE_SOUND_URL: Record<string, string> = {
+  hurryUp: "/sounds/htfu.mp3", // "hurry the f*** up"
+  bruh: "/sounds/bruh.mp3", // "bruh… you stupid"
+};
 
 const sampleBuffers = new Map<string, AudioBuffer>();
 const sampleLoading = new Map<string, Promise<AudioBuffer | null>>();
@@ -70,7 +74,7 @@ export function unlockAudio(): void {
   if (c.state === "suspended") void c.resume();
   // Warm the caches so the first play uses the real sample, not a fallback.
   void loadSample(c, PICK_SOUND_URL);
-  void loadSample(c, HURRY_SOUND_URL);
+  for (const url of Object.values(HECKLE_SOUND_URL)) void loadSample(c, url);
 }
 
 function tone(
@@ -107,9 +111,10 @@ export function playDing(): void {
   tone(c, 1318.5, 0.12, 0.3, 0.28, "triangle");
 }
 
-/** Plays the NSFW "hurry the f*** up" clip (no fallback — it's the whole joke). */
-export function playHurryUp(): void {
-  playSample(HURRY_SOUND_URL, 1.0);
+/** Plays an NSFW heckle clip by kind (no fallback — the clip is the whole joke). */
+export function playHeckle(kind: string): void {
+  const url = HECKLE_SOUND_URL[kind];
+  if (url) playSample(url, 1.0);
 }
 
 /** A short triumphant fanfare for the dramatic reveal. */

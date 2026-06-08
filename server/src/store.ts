@@ -64,6 +64,7 @@ function defaultConfig(leagueName: string): DraftConfig {
     showOnDeck: true,
     nsfw: false,
     hurryUpButton: true,
+    bruhButton: true,
   };
 }
 
@@ -80,6 +81,7 @@ const LIVE_CONFIG_KEYS = new Set<keyof DraftConfig>([
   "revealSeconds",
   "nsfw",
   "hurryUpButton",
+  "bruhButton",
 ]);
 
 export class SessionStore {
@@ -231,6 +233,7 @@ export class SessionStore {
     next.showOnDeck = Boolean(next.showOnDeck);
     next.nsfw = Boolean(next.nsfw);
     next.hurryUpButton = Boolean(next.hurryUpButton);
+    next.bruhButton = Boolean(next.bruhButton);
     s.config = next;
     this.touch(s);
   }

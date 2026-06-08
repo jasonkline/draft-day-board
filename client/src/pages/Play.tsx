@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { Player, SessionState } from "@shared/types";
+import type { HeckleKind, Player, SessionState } from "@shared/types";
 import { emit } from "../lib/socket";
 import { getTeamCreds, saveTeamCreds } from "../lib/storage";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
@@ -158,7 +158,7 @@ function PlayerView({
   const [selected, setSelected] = useState<Player | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [hurryCooldown, setHurryCooldown] = useState(false);
+  const [heckleCooldown, setHeckleCooldown] = useState(false);
   const secondsLeft = useCountdown(state.pickDeadline);
 
   const myTeam = teamById(state, creds.teamId);
@@ -167,19 +167,15 @@ function PlayerView({
     state.status === "drafting" && state.onClockTeamId === creds.teamId;
   const selfMode = state.config.mode === "self";
   const canPick = isMyTurn && selfMode;
-  // NSFW: off-clock players get a heckle button that takes over the board.
-  const canHeckle =
-    state.config.nsfw &&
-    state.config.hurryUpButton &&
-    state.status === "drafting" &&
-    !isMyTurn;
+  // NSFW: off-clock players get heckle buttons that take over the board.
+  const offClock = state.config.nsfw && state.status === "drafting" && !isMyTurn;
 
-  async function hurryUp() {
-    setHurryCooldown(true);
+  async function heckle(kind: HeckleKind) {
+    // One shared cooldown — the server gates all heckles per session anyway.
+    setHeckleCooldown(true);
     if (navigator.vibrate) navigator.vibrate([60, 40, 90]);
-    await emit("fan:hurryUp", { code, teamToken: creds.teamToken });
-    // Match the server cooldown so the button re-arms when it can actually fire.
-    setTimeout(() => setHurryCooldown(false), 2600);
+    await emit("fan:heckle", { code, kind, teamToken: creds.teamToken });
+    setTimeout(() => setHeckleCooldown(false), 2600);
   }
 
   const myRoster = useMemo(
@@ -264,17 +260,33 @@ function PlayerView({
         </div>
       )}
 
-      {canHeckle && (
-        <button
-          className="htfu-btn"
-          onClick={hurryUp}
-          disabled={hurryCooldown}
-        >
-          😤 HURRY THE F#@% UP
-          <small>
-            {hurryCooldown ? "…take a breath…" : "Blast it on the big screen"}
-          </small>
-        </button>
+      {offClock && (state.config.hurryUpButton || state.config.bruhButton) && (
+        <div className="heckle-bar">
+          {state.config.hurryUpButton && (
+            <button
+              className="htfu-btn"
+              onClick={() => heckle("hurryUp")}
+              disabled={heckleCooldown}
+            >
+              😤 HURRY THE F#@% UP
+              <small>
+                {heckleCooldown ? "…take a breath…" : "Blast it on the big screen"}
+              </small>
+            </button>
+          )}
+          {state.config.bruhButton && (
+            <button
+              className="htfu-btn htfu-btn-bruh"
+              onClick={() => heckle("bruh")}
+              disabled={heckleCooldown}
+            >
+              🤦 BRUH… YOU STUPID
+              <small>
+                {heckleCooldown ? "…take a breath…" : "Blast it on the big screen"}
+              </small>
+            </button>
+          )}
+        </div>
       )}
 
       {err && <div className="toast-error">{err}</div>}
