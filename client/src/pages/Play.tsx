@@ -216,7 +216,7 @@ function PlayerView({
           </span>
           <span className="play-league">{state.config.leagueName}</span>
         </div>
-        <Link className="btn btn-small btn-ghost" to={`/board/${code}`} target="_blank">
+        <Link className="btn btn-small btn-ghost" to={`/board/${code}`} target="_blank" rel="noopener noreferrer">
           📺
         </Link>
       </header>

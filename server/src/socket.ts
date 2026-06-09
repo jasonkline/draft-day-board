@@ -6,7 +6,8 @@ import type {
   JoinAck,
   HeckleFrom,
 } from "../../shared/types.js";
-import { store, type InternalSession } from "./store.js";
+import { store, safeEqual, type InternalSession } from "./store.js";
+import { RateLimiter } from "./ratelimit.js";
 import { syncPlayerPool } from "./yahoo/sync-core.js";
 import { fetchPlayerPool } from "./yahoo/pool.js";
 import { listLeagues, fetchLeague } from "./yahoo/league.js";
@@ -17,6 +18,18 @@ type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
 function room(code: string): string {
   return `session:${code}`;
 }
+
+// Throttle the events reachable without any token (create/watch/join/claim) so
+// the 5-char join-code space (~33.5M) can't be enumerated. A whole draft party
+// joining from one NAT'd IP fits in the burst; sustained guessing doesn't.
+const lookupLimiter = new RateLimiter(
+  Number(process.env.SESSION_LOOKUP_BURST) || 30,
+  Number(process.env.SESSION_LOOKUP_PER_SEC) || 1
+);
+function lookupAllowed(socket: Sock): boolean {
+  return lookupLimiter.allow(socket.handshake.address ?? "unknown");
+}
+const RATE_LIMITED = "Too many requests — wait a moment and try again";
 
 // Per-session cooldown (ms) so heckles can't be machine-gunned into
 // overlapping audio/animation chaos on the board. Shared across kinds.
@@ -40,8 +53,10 @@ function fail(error: string): JoinAck {
 export function registerSocketHandlers(io: IO): void {
   io.on("connection", (socket: Sock) => {
     socket.on("session:create", ({ config, teamNames }, cb) => {
+      if (!lookupAllowed(socket)) return cb(fail(RATE_LIMITED));
       try {
-        const s = store.create(config?.leagueName ?? "Fantasy Draft", teamNames ?? []);
+        const names = Array.isArray(teamNames) ? teamNames : [];
+        const s = store.create(config?.leagueName ?? "Fantasy Draft", names);
         if (config) store.updateConfig(s, config);
         socket.join(room(s.code));
         cb({
@@ -55,6 +70,7 @@ export function registerSocketHandlers(io: IO): void {
     });
 
     socket.on("session:watch", ({ code }, cb) => {
+      if (!lookupAllowed(socket)) return cb(fail(RATE_LIMITED));
       const s = store.get(code);
       if (!s) return cb(fail("Session not found"));
       socket.join(room(s.code));
@@ -62,14 +78,18 @@ export function registerSocketHandlers(io: IO): void {
     });
 
     socket.on("session:adminJoin", ({ code, adminToken }, cb) => {
+      if (!lookupAllowed(socket)) return cb(fail(RATE_LIMITED));
       const s = store.get(code);
       if (!s) return cb(fail("Session not found"));
       if (!store.isAdmin(s, adminToken)) return cb(fail("Invalid commissioner link"));
       socket.join(room(s.code));
-      cb({ ok: true, state: store.toPublicState(s), adminToken: s.adminToken });
+      // The caller already holds the adminToken (they just sent it) — never
+      // echo it back; secrets only travel on first issuance (session:create).
+      cb({ ok: true, state: store.toPublicState(s) });
     });
 
     socket.on("session:claimTeam", ({ code, teamId, teamToken }, cb) => {
+      if (!lookupAllowed(socket)) return cb(fail(RATE_LIMITED));
       const s = store.get(code);
       if (!s) return cb(fail("Session not found"));
       try {
@@ -233,7 +253,7 @@ export function registerSocketHandlers(io: IO): void {
       const onClock = store.toPublicState(s).onClockTeamId;
       let from: HeckleFrom | undefined;
       if (teamToken) {
-        const team = s.teams.find((t) => t.token === teamToken);
+        const team = s.teams.find((t) => safeEqual(teamToken, t.token));
         if (team && team.id === onClock)
           return cb({ ok: false, error: "You're on the clock — pick already!" });
         if (team) from = { name: team.name, emoji: team.emoji, color: team.avatarColor };
@@ -243,6 +263,11 @@ export function registerSocketHandlers(io: IO): void {
       // doesn't show an error for an over-eager tapper).
       const now = Date.now();
       if (now - (lastHeckleAt.get(s.code) ?? 0) < HECKLE_COOLDOWN_MS) return cb({ ok: true });
+      // Cooldown entries are useless seconds after they're set — sweep stale
+      // ones occasionally so the map can't grow with session churn.
+      if (lastHeckleAt.size > 500) {
+        for (const [c, t] of lastHeckleAt) if (now - t > 60_000) lastHeckleAt.delete(c);
+      }
       lastHeckleAt.set(s.code, now);
 
       io.to(room(s.code)).emit("fan:heckle", { kind, from });

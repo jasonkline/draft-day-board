@@ -102,12 +102,13 @@ export function writeEnvVar(key: string, value: string): string {
   const idx = lines.findIndex((l) => l.trim().startsWith(`${key}=`));
   const newLine = `${key}=${value}`;
   if (idx === -1) {
-    // Append, keeping a single trailing newline.
+    // Append, keeping a single trailing newline. .env holds credentials, so
+    // keep it readable by this user only.
     const body = text.endsWith("\n") || text === "" ? text : text + "\n";
-    writeFileSync(envPath, body + newLine + "\n");
+    writeFileSync(envPath, body + newLine + "\n", { mode: 0o600 });
   } else {
     lines[idx] = newLine;
-    writeFileSync(envPath, lines.join("\n"));
+    writeFileSync(envPath, lines.join("\n"), { mode: 0o600 });
   }
   return envPath;
 }

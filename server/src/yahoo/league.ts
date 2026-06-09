@@ -156,11 +156,16 @@ export interface LeagueTeam {
   logoUrl?: string;
 }
 
-/** First usable logo url from a team's `team_logos` collection. */
+/**
+ * First usable logo url from a team's `team_logos` collection. Only https URLs
+ * qualify — these are broadcast to every client and rendered as <img src>, so
+ * other schemes (javascript:, data:, http:) are dropped at the boundary.
+ */
 function teamLogoUrl(meta: Record<string, any>): string | undefined {
   for (const entry of collectionValues(meta.team_logos)) {
     const logo = entry?.team_logo ?? entry;
-    if (typeof logo?.url === "string" && logo.url) return logo.url;
+    if (typeof logo?.url === "string" && logo.url.startsWith("https://"))
+      return logo.url;
   }
   return undefined;
 }

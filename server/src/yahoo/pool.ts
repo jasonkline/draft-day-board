@@ -34,7 +34,9 @@ function flatten(arr: unknown): Record<string, any> {
 function unwrapHeadshot(url: string | undefined): string | undefined {
   if (!url) return undefined;
   const inner = url.indexOf("https://", "https://".length);
-  return inner > 0 ? url.slice(inner) : url;
+  const result = inner > 0 ? url.slice(inner) : url;
+  // Clients render this as <img src> — only https URLs may pass the boundary.
+  return result.startsWith("https://") ? result : undefined;
 }
 
 /** Pick the first eligible fantasy position we recognize. */

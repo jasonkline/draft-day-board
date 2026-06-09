@@ -414,7 +414,7 @@ function SetupView({
 
       <div className="admin-startbar">
         {err && <span className="toast-error">{err}</span>}
-        <Link className="btn btn-ghost" to={`/board/${code}`} target="_blank">
+        <Link className="btn btn-ghost" to={`/board/${code}`} target="_blank" rel="noopener noreferrer">
           📺 Open Board
         </Link>
         <button
@@ -748,7 +748,7 @@ function DraftView({
       )}
 
       <div className="admin-draft-actions">
-        <Link className="btn btn-ghost" to={`/board/${code}`} target="_blank">
+        <Link className="btn btn-ghost" to={`/board/${code}`} target="_blank" rel="noopener noreferrer">
           📺 Board
         </Link>
         <button

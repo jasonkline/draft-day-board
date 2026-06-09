@@ -1,5 +1,13 @@
 import { customAlphabet } from "nanoid";
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -27,6 +35,23 @@ const tokenId = customAlphabet(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
   24
 );
+
+// Hard ceilings so an unauthenticated client can't grow memory/disk without
+// bound. Idle sessions age out (a draft is a one-evening event) to make room.
+const MAX_SESSIONS = Number(process.env.MAX_SESSIONS) || 500;
+const MAX_TEAMS = 32;
+const SESSION_TTL_MS =
+  (Number(process.env.SESSION_TTL_DAYS) || 14) * 24 * 60 * 60 * 1000;
+
+/**
+ * Constant-time comparison for secret tokens (admin + team capability tokens).
+ * Accepts unknown so unvalidated wire input can be passed directly.
+ */
+export function safeEqual(candidate: unknown, secret: string): boolean {
+  if (typeof candidate !== "string" || candidate.length !== secret.length)
+    return false;
+  return timingSafeEqual(Buffer.from(candidate), Buffer.from(secret));
+}
 
 const TEAM_COLORS = [
   "#e63946", "#2a9d8f", "#e9c46a", "#f4a261", "#457b9d", "#9b5de5",
@@ -99,12 +124,17 @@ export class SessionStore {
 
   constructor() {
     this.load();
+    this.cleanupIdle();
+    setInterval(() => this.cleanupIdle(), 60 * 60 * 1000).unref();
   }
 
   // ---- persistence ----
   private load(): void {
     try {
       if (!existsSync(DATA_FILE)) return;
+      // writeFileSync's mode only applies on creation — retro-tighten files
+      // written before permissions were locked down (they hold every token).
+      chmodSync(DATA_FILE, 0o600);
       const raw = readFileSync(DATA_FILE, "utf8");
       const arr = JSON.parse(raw) as InternalSession[];
       for (const s of arr) {
@@ -127,14 +157,17 @@ export class SessionStore {
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       try {
-        mkdirSync(DATA_DIR, { recursive: true });
+        // sessions.json holds every session's capability tokens — keep it
+        // readable by this user only.
+        mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
         // `players` is a per-session sidecar — keep it out of sessions.json so
         // the file stays small (it's rewritten on every pick).
         writeFileSync(
           DATA_FILE,
           JSON.stringify([...this.sessions.values()], (k, v) =>
             k === "players" ? undefined : v
-          )
+          ),
+          { mode: 0o600 }
         );
       } catch (err) {
         console.error("[store] failed to save sessions:", err);
@@ -157,12 +190,21 @@ export class SessionStore {
 
   // ---- lifecycle ----
   create(leagueName: string, teamNames: string[]): InternalSession {
+    if (this.sessions.size >= MAX_SESSIONS) {
+      this.cleanupIdle();
+      if (this.sessions.size >= MAX_SESSIONS)
+        throw new Error("Server is at capacity — try again later");
+    }
+
     let code = codeId();
     while (this.sessions.has(code)) code = codeId();
 
+    const sanitized = (Array.isArray(teamNames) ? teamNames : [])
+      .slice(0, MAX_TEAMS)
+      .map((n) => (typeof n === "string" ? n : "").slice(0, 40));
     const names =
-      teamNames.length > 0
-        ? teamNames
+      sanitized.length > 0
+        ? sanitized
         : Array.from({ length: 10 }, (_, i) => `Team ${i + 1}`);
 
     const teams: Team[] = names.map((name, i) => ({
@@ -193,6 +235,28 @@ export class SessionStore {
 
   get(code: string): InternalSession | undefined {
     return this.sessions.get(code?.toUpperCase?.() ?? code);
+  }
+
+  /** Drop sessions idle past the TTL (and their pool sidecars). */
+  private cleanupIdle(): void {
+    const cutoff = Date.now() - SESSION_TTL_MS;
+    let removed = 0;
+    for (const [code, s] of this.sessions) {
+      if (s.updatedAt < cutoff) {
+        this.sessions.delete(code);
+        try {
+          rmSync(poolFile(code), { force: true });
+        } catch {
+          // best-effort sidecar cleanup
+        }
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[store] removed ${removed} idle session(s)`);
+      this.scheduleSave();
+    }
   }
 
   private touch(s: InternalSession): void {
@@ -301,7 +365,9 @@ export class SessionStore {
         avatarColor: TEAM_COLORS[i % TEAM_COLORS.length],
         emoji: TEAM_EMOJI[i % TEAM_EMOJI.length],
       };
-      if (t.logoUrl) team.logoUrl = t.logoUrl;
+      // Only accept https logos — this URL is broadcast to every client and
+      // rendered as an <img src>, so never let other schemes through.
+      if (t.logoUrl && t.logoUrl.startsWith("https://")) team.logoUrl = t.logoUrl;
       return team;
     });
     s.draftOrder = s.teams.map((t) => t.id);
@@ -370,7 +436,7 @@ export class SessionStore {
     const team = s.teams.find((t) => t.id === teamId);
     if (!team) throw new Error("Team not found");
     // Re-claim with the correct token is always allowed (reconnect / refresh).
-    if (existingToken && existingToken === team.token) {
+    if (existingToken && safeEqual(existingToken, team.token)) {
       team.claimed = true;
       this.touch(s);
       return team;
@@ -439,9 +505,9 @@ export class SessionStore {
   ): string {
     const onClock = teamIdForOverall(overall, s.draftOrder, s.config.draftStyle);
     // Commissioner can always pick (and is the only picker in commissioner mode).
-    if (opts.adminToken && opts.adminToken === s.adminToken) return onClock;
+    if (opts.adminToken && safeEqual(opts.adminToken, s.adminToken)) return onClock;
     if (s.config.mode === "self" && opts.teamToken) {
-      const team = s.teams.find((t) => t.token === opts.teamToken);
+      const team = s.teams.find((t) => safeEqual(opts.teamToken, t.token));
       if (!team) throw new Error("Invalid team token");
       if (team.id !== onClock) throw new Error("It is not your turn to pick");
       return onClock;
@@ -450,7 +516,7 @@ export class SessionStore {
   }
 
   isAdmin(s: InternalSession, token?: string): boolean {
-    return !!token && token === s.adminToken;
+    return !!token && safeEqual(token, s.adminToken);
   }
 
   private assertSetup(s: InternalSession): void {

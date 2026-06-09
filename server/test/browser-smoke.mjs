@@ -86,10 +86,8 @@ async function run() {
     // ---- Commissioner makes the first pick ----
     await admin.waitForSelector(".player-row", { timeout: 5000 });
     const pickedName = (
-      await admin.locator(".player-row .player-name").first().innerText()
-    )
-      .split("\n")[0]
-      .trim();
+      await admin.locator(".player-row .player-name-text").first().innerText()
+    ).trim();
     await admin.locator(".player-row").first().click();
     await admin.waitForSelector(".modal", { timeout: 4000 });
     await admin.getByRole("button", { name: /Lock It In/ }).click();
@@ -98,7 +96,9 @@ async function run() {
     // ---- Board: dramatic reveal sequence ----
     await board.waitForSelector(".reveal-incoming-text", { timeout: 5000 });
     assert(true, '"THE PICK IS IN" overlay shown');
-    await board.waitForSelector(".reveal-name", { timeout: 6000 });
+    // The announcement beat holds for announcementSeconds (default 6s) before
+    // the card appears — give the reveal comfortably more than that.
+    await board.waitForSelector(".reveal-name", { timeout: 12000 });
     const revealName = (await board.locator(".reveal-name").innerText()).trim();
     assert(
       revealName.includes(pickedName) || pickedName.includes(revealName),
@@ -108,7 +108,11 @@ async function run() {
     // ---- After reveal, pick lands in the grid ----
     await board.waitForSelector(".cell-filled", { timeout: 12000 });
     const cellText = (await board.locator(".cell-filled").first().innerText()).trim();
-    assert(cellText.includes(pickedName), `pick appears on board grid (${cellText.replace(/\n/g, " ")})`);
+    // Board cells render surname-first ("Robinson Bijan"), so match by parts.
+    assert(
+      pickedName.split(/\s+/).every((part) => cellText.includes(part)),
+      `pick appears on board grid (${cellText.replace(/\n/g, " ")})`
+    );
 
     assert(errors.length === 0, `no console/page errors${errors.length ? ": " + errors.join(" | ") : ""}`);
     console.log(`\n[browser] ${failures === 0 ? "ALL PASSED ✅" : failures + " FAILED ❌"}`);

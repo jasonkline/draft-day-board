@@ -20,8 +20,11 @@ export interface TokenResponse {
   xoauth_yahoo_guid?: string;
 }
 
-/** Build the consent URL the user opens in a browser to authorize the app. */
-export function buildAuthUrl(cfg: YahooConfig): string {
+/**
+ * Build the consent URL the user opens in a browser to authorize the app.
+ * `state` is the OAuth CSRF nonce — echo-verified when the redirect comes back.
+ */
+export function buildAuthUrl(cfg: YahooConfig, state?: string): string {
   const params = new URLSearchParams({
     client_id: cfg.clientId,
     redirect_uri: cfg.redirectUri,
@@ -29,6 +32,7 @@ export function buildAuthUrl(cfg: YahooConfig): string {
     scope: SCOPE,
     language: "en-us",
   });
+  if (state) params.set("state", state);
   return `${AUTH_URL}?${params.toString()}`;
 }
 

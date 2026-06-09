@@ -128,7 +128,9 @@ export interface JoinAck {
   ok: boolean;
   error?: string;
   state?: SessionState;
-  // Role-specific secrets returned only to the rightful client.
+  // Role-specific secrets returned only to the rightful client, and only on
+  // first issuance (session:create / session:claimTeam) — never echoed back
+  // on rejoin.
   adminToken?: string;
   teamToken?: string;
   teamId?: string;

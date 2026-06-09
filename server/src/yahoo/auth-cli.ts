@@ -6,25 +6,40 @@
 
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { randomUUID } from "node:crypto";
 import { readYahooConfig, writeEnvVar } from "./env.js";
 import { buildAuthUrl, exchangeCodeForTokens } from "./oauth.js";
 
-/** Pull the `code` out of whatever the user pastes (full URL or bare code). */
-function extractCode(input: string): string {
+/**
+ * Pull the `code` out of whatever the user pastes (full URL or bare code).
+ * When a full redirect URL is pasted, its OAuth `state` must match the one we
+ * sent — a mismatch means the code came from some other authorization attempt.
+ */
+function extractCode(input: string, expectedState: string): string {
   const trimmed = input.trim();
   try {
     const url = new URL(trimmed);
     const code = url.searchParams.get("code");
-    if (code) return code;
-  } catch {
-    // Not a URL — treat as a bare code.
+    if (code) {
+      const state = url.searchParams.get("state");
+      if (state !== expectedState) {
+        throw new Error(
+          "The pasted URL's state doesn't match this run. Re-run yahoo:auth and use the freshly printed URL."
+        );
+      }
+      return code;
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("state")) throw err;
+    // Not a URL — treat as a bare code (state can't be verified in that case).
   }
   return trimmed;
 }
 
 async function main() {
   const cfg = readYahooConfig();
-  const authUrl = buildAuthUrl(cfg);
+  const state = randomUUID();
+  const authUrl = buildAuthUrl(cfg, state);
 
   console.log("\n=== Yahoo Fantasy authorization ===\n");
   console.log("1. Open this URL in your browser and approve access:\n");
@@ -39,7 +54,7 @@ async function main() {
   const pasted = await rl.question("3. Paste the redirect URL (or code) here: ");
   rl.close();
 
-  const code = extractCode(pasted);
+  const code = extractCode(pasted, state);
   if (!code) {
     console.error("\nNo authorization code found in what you pasted. Aborting.");
     process.exit(1);
