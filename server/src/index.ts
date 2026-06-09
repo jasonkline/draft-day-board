@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import type {
@@ -28,9 +28,26 @@ app.get("/api/health", (_req, res) => {
 // Serve the built client in production (client builds to ../client/dist).
 const clientDist = join(__dirname, "..", "..", "client", "dist");
 if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  // SPA fallback for client-side routes.
+  app.use(
+    express.static(clientDist, {
+      setHeaders(res, filePath) {
+        // Vite emits content-hashed files under /assets — the hash changes
+        // when content changes, so they're safe to cache forever. This means
+        // a browser that loaded the page once never re-requests the JS/CSS,
+        // so a dropped connection (e.g. Render free-tier cold start) on a
+        // later refresh can't strip the styles. index.html must stay fresh
+        // so it always points at the current asset hashes.
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        } else if (filePath.includes(`${sep}assets${sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }),
+  );
+  // SPA fallback for client-side routes (always serve fresh HTML).
   app.get(/^(?!\/api|\/socket\.io).*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(join(clientDist, "index.html"));
   });
 }
