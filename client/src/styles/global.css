@@ -1504,12 +1504,12 @@ details[open] .extras-summary::before {
   border: 1px solid var(--line);
   border-top: 3px solid var(--line);
   border-radius: 8px;
-  padding: 8px 6px;
+  padding: 4px 6px;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   overflow: hidden;
 }
 .grid-head-onclock {
@@ -1517,25 +1517,34 @@ details[open] .extras-summary::before {
   animation: pulse 1.4s infinite;
 }
 .grid-head-emoji {
-  font-size: 1.1rem;
+  font-size: clamp(0.95rem, 0.8rem + 0.3vw, 1.4rem);
+  line-height: 1.1;
 }
 .grid-head-name {
   font-weight: 700;
-  font-size: 0.8rem;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
+  font-size: clamp(0.78rem, 0.6rem + 0.38vw, 1.25rem);
+  line-height: 1.1;
   max-width: 100%;
+  /* Let long team names wrap to two lines instead of clipping. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .cell {
+  position: relative;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 8px;
-  min-height: 52px;
-  padding: 6px 8px;
+  /* Fixed height: the whole board must stay visible without scrolling. */
+  height: 52px;
+  padding: 3px 8px;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
+  text-align: center;
   overflow: hidden;
 }
 .cell-filled {
@@ -1543,19 +1552,37 @@ details[open] .extras-summary::before {
   animation: cellIn 0.4s ease;
 }
 .cell-overall {
-  font-size: 0.66rem;
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 0.6rem;
   color: var(--muted);
   font-weight: 700;
+  line-height: 1;
 }
-.cell-player {
-  font-weight: 700;
-  font-size: 0.92rem;
+/* Prominent surname — the main thing you read from across the room. */
+.cell-last {
+  font-weight: 800;
+  font-size: clamp(0.88rem, 0.7rem + 0.36vw, 1.25rem);
+  line-height: 1.05;
+  max-width: 100%;
   white-space: nowrap;
-  text-overflow: ellipsis;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* First name, smaller and quieter, centered underneath the surname. */
+.cell-first {
+  font-weight: 600;
+  font-size: clamp(0.6rem, 0.5rem + 0.18vw, 0.85rem);
+  line-height: 1.1;
+  color: var(--muted);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cell-pos {
-  font-size: 0.7rem;
+  font-size: clamp(0.62rem, 0.52rem + 0.18vw, 0.85rem);
   color: var(--muted);
 }
 .cell-empty {

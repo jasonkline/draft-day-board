@@ -97,6 +97,10 @@ function FragmentRow({
 
         if (pick && !hidden) {
           const player = playerById(state, pick.playerId);
+          // Last name gets top billing; first name sits small underneath.
+          const parts = (player?.name ?? "").trim().split(/\s+/);
+          const firstName = parts.length > 1 ? parts[0] : "";
+          const lastName = parts.length > 1 ? parts.slice(1).join(" ") : parts[0];
           return (
             <div
               key={teamId}
@@ -108,7 +112,8 @@ function FragmentRow({
               }}
             >
               <span className="cell-overall">{pick.overall}</span>
-              <span className="cell-player">{player?.name}</span>
+              <span className="cell-last">{lastName}</span>
+              {firstName && <span className="cell-first">{firstName}</span>}
               <span className="cell-pos">
                 {player?.position} · {player?.nflTeam}
               </span>
