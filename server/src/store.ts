@@ -238,6 +238,46 @@ export class SessionStore {
     this.touch(s);
   }
 
+  /**
+   * Replace the session's teams and config from an imported Yahoo league. The
+   * team count is fixed at creation, so importing a league with a different
+   * number of teams means rebuilding the list (fresh tokens, reset claims) and
+   * resetting the draft order. Setup-only — never after picks exist.
+   */
+  applyImportedLeague(
+    s: InternalSession,
+    imp: {
+      leagueName: string;
+      teams: { name: string; logoUrl?: string }[];
+      rounds: number;
+    }
+  ): void {
+    this.assertSetup(s);
+    const teams = imp.teams.filter((t) => t.name.trim());
+    if (teams.length < 2) throw new Error("League import returned fewer than 2 teams");
+
+    s.teams = teams.map((t, i) => {
+      const team: Team = {
+        id: `team-${i + 1}`,
+        name: t.name.trim().slice(0, 40),
+        token: tokenId(),
+        claimed: false,
+        avatarColor: TEAM_COLORS[i % TEAM_COLORS.length],
+        emoji: TEAM_EMOJI[i % TEAM_EMOJI.length],
+      };
+      if (t.logoUrl) team.logoUrl = t.logoUrl;
+      return team;
+    });
+    s.draftOrder = s.teams.map((t) => t.id);
+
+    s.config = {
+      ...s.config,
+      leagueName: (imp.leagueName || s.config.leagueName).slice(0, 60),
+      rounds: clamp(Math.round(imp.rounds) || s.config.rounds, 1, 30),
+    };
+    this.touch(s);
+  }
+
   updateTeams(s: InternalSession, updates: { id: string; name: string }[]): void {
     this.assertSetup(s);
     for (const u of updates) {

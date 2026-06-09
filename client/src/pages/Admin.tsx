@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { DraftConfig, HeckleKind, Player, SessionState } from "@shared/types";
+import type {
+  DraftConfig,
+  HeckleKind,
+  Player,
+  SessionState,
+  YahooLeagueSummary,
+} from "@shared/types";
 import { emit } from "../lib/socket";
 import { getAdminToken } from "../lib/storage";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
 import { ShareLinks } from "../components/ShareLinks";
 import { PlayerPool } from "../components/PlayerPool";
 import { ConfirmPickModal } from "../components/ConfirmPickModal";
+import { TeamAvatar } from "../components/TeamAvatar";
 import { playDing, unlockAudio } from "../lib/sound";
 import { teamById } from "../lib/util";
 
@@ -97,6 +104,48 @@ function SetupView({
       ack.ok
         ? `✅ Updated — ${ack.count} players loaded.`
         : `⚠️ ${ack.error || "Refresh failed"}`
+    );
+  }
+
+  // ---- Yahoo league import ----
+  const [leagues, setLeagues] = useState<YahooLeagueSummary[] | null>(null);
+  const [leagueKey, setLeagueKey] = useState("");
+  const [findingLeagues, setFindingLeagues] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
+
+  async function findLeagues() {
+    setFindingLeagues(true);
+    setImportMsg("");
+    const ack = await emit("admin:listYahooLeagues", { code, adminToken });
+    setFindingLeagues(false);
+    if (!ack.ok) {
+      setLeagues(null);
+      setImportMsg(`⚠️ ${ack.error || "Could not list leagues"}`);
+      return;
+    }
+    const found = ack.leagues ?? [];
+    setLeagues(found);
+    setLeagueKey(found[0]?.leagueKey ?? "");
+    if (found.length === 0) {
+      setImportMsg("No NFL leagues found for the authorized Yahoo account.");
+    }
+  }
+
+  async function importLeague() {
+    if (!leagueKey) return;
+    setImporting(true);
+    setImportMsg("");
+    const ack = await emit("admin:importYahooLeague", { code, adminToken, leagueKey });
+    setImporting(false);
+    if (!ack.ok || !ack.summary) {
+      setImportMsg(`⚠️ ${ack.error || "Import failed"}`);
+      return;
+    }
+    const s = ack.summary;
+    setImportMsg(
+      `✅ Imported “${s.leagueName}” — ${s.numTeams} teams, ${s.rounds} rounds, ` +
+        `${s.scoringLabel}. ${s.playerCount} players with league ADP.`
     );
   }
 
@@ -231,7 +280,7 @@ function SetupView({
                   <span className="order-num" style={{ background: team.avatarColor }}>
                     {i + 1}
                   </span>
-                  <span className="order-emoji">{team.emoji}</span>
+                  <TeamAvatar team={team} className="order-emoji" />
                   <input
                     className="order-name"
                     defaultValue={team.name}
@@ -259,6 +308,47 @@ function SetupView({
         <section className="card">
           <h2>Share</h2>
           <ShareLinks code={code} />
+        </section>
+
+        <section className="card">
+          <h2>Import from Yahoo</h2>
+          <p className="hint">
+            Pull your real league: team names, roster size (rounds) &amp;
+            league-scoped ADP. Overwrites the teams &amp; rounds above. Draft
+            style stays as you set it.
+          </p>
+          <button
+            className="btn btn-small"
+            onClick={findLeagues}
+            disabled={findingLeagues || importing}
+          >
+            {findingLeagues ? "Finding…" : "🔎 Find my leagues"}
+          </button>
+          {leagues && leagues.length > 0 && (
+            <div className="field" style={{ marginTop: "0.6rem" }}>
+              <span>League</span>
+              <select
+                value={leagueKey}
+                onChange={(e) => setLeagueKey(e.target.value)}
+                disabled={importing}
+              >
+                {leagues.map((l) => (
+                  <option key={l.leagueKey} value={l.leagueKey}>
+                    {l.name} · {l.season} · {l.numTeams}-team {l.scoringLabel}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-small"
+                onClick={importLeague}
+                disabled={importing || !leagueKey}
+                style={{ marginTop: "0.6rem" }}
+              >
+                {importing ? "Importing…" : "⬇️ Import this league"}
+              </button>
+            </div>
+          )}
+          {importMsg && <p className="hint">{importMsg}</p>}
         </section>
 
         <section className="card">
@@ -634,7 +724,7 @@ function DraftView({
           <div>
             <span className="strip-label">ON THE CLOCK</span>
             <span className="strip-team" style={{ color: onClockTeam?.avatarColor }}>
-              {onClockTeam?.emoji} {onClockTeam?.name}
+              {onClockTeam && <TeamAvatar team={onClockTeam} />} {onClockTeam?.name}
             </span>
           </div>
           <div className="strip-right">

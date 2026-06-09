@@ -105,13 +105,25 @@ function mapRawPlayer(entry: any): RawPlayer | null {
   return { name, position, nflTeam, byeWeek, adp, percentDrafted, headshotUrl };
 }
 
-/** Pull one page of a single position, sorted by Yahoo's overall rank. */
-async function fetchPage(position: PlayerPosition, start: number): Promise<RawPlayer[]> {
-  const path = `game/nfl/players;position=${position};start=${start};count=${PAGE_SIZE};sort=OR;out=draft_analysis,ownership`;
+/**
+ * Pull one page of a single position, sorted by Yahoo's overall rank. With a
+ * `leagueKey`, the players are scoped to that league (`status=ALL` to include
+ * already-drafted players) so the `draft_analysis` ADP reflects the league's
+ * real settings (team count + PPR/standard) rather than Yahoo's global average.
+ */
+async function fetchPage(
+  position: PlayerPosition,
+  start: number,
+  leagueKey?: string
+): Promise<RawPlayer[]> {
+  const base = leagueKey ? `league/${leagueKey}` : "game/nfl";
+  const status = leagueKey ? ";status=ALL" : "";
+  const path = `${base}/players;position=${position};start=${start};count=${PAGE_SIZE}${status};sort=OR;out=draft_analysis,ownership`;
   const data = await yahooGet(path);
-  const game = data?.fantasy_content?.game;
-  const playersObj = Array.isArray(game)
-    ? game.find((g: any) => g && typeof g === "object" && "players" in g)?.players
+  // game queries nest players under `game`, league queries under `league`.
+  const container = data?.fantasy_content?.league ?? data?.fantasy_content?.game;
+  const playersObj = Array.isArray(container)
+    ? container.find((g: any) => g && typeof g === "object" && "players" in g)?.players
     : undefined;
   if (!playersObj) return [];
 
@@ -164,6 +176,11 @@ export interface FetchPoolOptions {
   maxPerPosition?: number;
   /** Optional progress logger. */
   onProgress?: (msg: string) => void;
+  /**
+   * Scope the pull to a specific Yahoo league so ADP reflects that league's
+   * settings (team count + PPR/standard). Omit for Yahoo's global game pool.
+   */
+  leagueKey?: string;
 }
 
 /**
@@ -181,7 +198,7 @@ export async function fetchPlayerPool(opts: FetchPoolOptions = {}): Promise<Play
   for (const position of OUR_POSITIONS) {
     let got = 0;
     for (let start = 0; start < maxPerPosition; start += PAGE_SIZE) {
-      const page = await fetchPage(position, start);
+      const page = await fetchPage(position, start, opts.leagueKey);
       candidates.push(...page);
       got += page.length;
       if (page.length < PAGE_SIZE) break; // ran out of players for this position

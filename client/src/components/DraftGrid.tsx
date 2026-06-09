@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Pick, SessionState } from "@shared/types";
 import { POSITION_COLORS, playerById } from "../lib/util";
+import { TeamAvatar } from "./TeamAvatar";
 
 interface Props {
   state: SessionState;
@@ -44,7 +45,7 @@ export function DraftGrid({ state, compact, hidePickOverall }: Props) {
               }`}
               style={{ borderColor: team.avatarColor }}
             >
-              <span className="grid-head-emoji">{team.emoji}</span>
+              <TeamAvatar team={team} className="grid-head-emoji" />
               <span className="grid-head-name">{team.name}</span>
             </div>
           );

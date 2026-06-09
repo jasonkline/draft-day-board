@@ -6,6 +6,7 @@ import { getTeamCreds, saveTeamCreds } from "../lib/storage";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
 import { PlayerPool } from "../components/PlayerPool";
 import { ConfirmPickModal } from "../components/ConfirmPickModal";
+import { TeamAvatar } from "../components/TeamAvatar";
 import { playDing, unlockAudio } from "../lib/sound";
 import { POSITION_COLORS, playerById, teamById } from "../lib/util";
 
@@ -125,7 +126,7 @@ function ClaimView({
             disabled={t.claimed || busy != null}
             onClick={() => claim(t.id)}
           >
-            <span className="claim-emoji">{t.emoji}</span>
+            <TeamAvatar team={t} className="claim-emoji" />
             <span className="claim-name">{t.name}</span>
             {t.claimed ? (
               <span className="claim-status">Taken</span>
@@ -211,7 +212,7 @@ function PlayerView({
       >
         <div>
           <span className="play-you" style={{ color: myTeam?.avatarColor }}>
-            {myTeam?.emoji} {myTeam?.name}
+            {myTeam && <TeamAvatar team={myTeam} />} {myTeam?.name}
           </span>
           <span className="play-league">{state.config.leagueName}</span>
         </div>
@@ -248,7 +249,7 @@ function PlayerView({
             <>
               <span className="turn-sub">On the clock</span>
               <span className="turn-big" style={{ color: onClockTeam?.avatarColor }}>
-                {onClockTeam?.emoji} {onClockTeam?.name}
+                {onClockTeam && <TeamAvatar team={onClockTeam} />} {onClockTeam?.name}
               </span>
             </>
           )}

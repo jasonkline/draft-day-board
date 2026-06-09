@@ -188,3 +188,60 @@ describe("pick authorization & flow", () => {
     expect(s.picks).toHaveLength(total - 1);
   });
 });
+
+describe("applyImportedLeague (Yahoo import)", () => {
+  it("rebuilds the team list to match the imported league", () => {
+    const { store, s } = freshSession(); // starts with 4 teams
+    store.applyImportedLeague(s, {
+      leagueName: "D.O.N.E.",
+      teams: [
+        { name: "Alpha", logoUrl: "https://logo.test/a.png" },
+        { name: "Bravo" }, { name: "Charlie" }, { name: "Delta" },
+        { name: "Echo" }, { name: "Foxtrot" },
+      ],
+      rounds: 16,
+    });
+    expect(s.teams).toHaveLength(6);
+    expect(s.teams.map((t) => t.name)).toEqual([
+      "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
+    ]);
+    expect(s.teams[0].logoUrl).toBe("https://logo.test/a.png");
+    expect(s.teams[1].logoUrl).toBeUndefined();
+    // fresh, unique tokens + reset claims + matching draft order
+    expect(new Set(s.teams.map((t) => t.token)).size).toBe(6);
+    expect(s.teams.every((t) => !t.claimed)).toBe(true);
+    expect(s.draftOrder).toEqual(s.teams.map((t) => t.id));
+    expect(s.config.leagueName).toBe("D.O.N.E.");
+    expect(s.config.rounds).toBe(16);
+  });
+
+  it("clamps rounds and trims blank team names", () => {
+    const { store, s } = freshSession();
+    store.applyImportedLeague(s, {
+      leagueName: "X",
+      teams: [{ name: "One" }, { name: "  " }, { name: "Two" }],
+      rounds: 999,
+    });
+    expect(s.teams.map((t) => t.name)).toEqual(["One", "Two"]);
+    expect(s.config.rounds).toBe(30); // clamped to max
+  });
+
+  it("rejects imports with fewer than 2 teams", () => {
+    const { store, s } = freshSession();
+    expect(() =>
+      store.applyImportedLeague(s, { leagueName: "X", teams: [{ name: "Solo" }], rounds: 10 })
+    ).toThrow(/fewer than 2/);
+  });
+
+  it("is setup-only — refuses after the draft starts", () => {
+    const { store, s } = freshSession();
+    store.startDraft(s);
+    expect(() =>
+      store.applyImportedLeague(s, {
+        leagueName: "X",
+        teams: [{ name: "A" }, { name: "B" }, { name: "C" }],
+        rounds: 12,
+      })
+    ).toThrow(/locked/);
+  });
+});

@@ -32,6 +32,9 @@ export interface Team {
   claimed: boolean;
   avatarColor: string;
   emoji: string;
+  // Optional team logo (e.g. imported from a Yahoo league). When present the UI
+  // shows it in place of the emoji avatar.
+  logoUrl?: string;
 }
 
 // Team as exposed to non-owners (token stripped).
@@ -139,6 +142,24 @@ export interface PickRevealEvent {
   isLastPick: boolean;
 }
 
+// One of the authorized Yahoo account's leagues, for the import dropdown.
+export interface YahooLeagueSummary {
+  leagueKey: string; // e.g. "470.l.44749"
+  name: string;
+  season: string; // "2026"
+  numTeams: number;
+  scoringLabel: string; // "H2H" | "Points" | "Rotisserie" (from scoring_type)
+}
+
+// Result of importing a Yahoo league into the current setup.
+export interface YahooImportSummary {
+  leagueName: string;
+  numTeams: number;
+  rounds: number;
+  scoringLabel: string; // refined with PPR detection, e.g. "12-team · Full PPR"
+  playerCount: number; // players pulled with league-scoped ADP
+}
+
 // Client -> server events
 export interface ClientToServerEvents {
   "session:create": (
@@ -178,6 +199,16 @@ export interface ClientToServerEvents {
   "admin:refreshPlayers": (
     payload: { code: string; adminToken: string },
     cb: (ack: { ok: boolean; error?: string; count?: number }) => void
+  ) => void;
+  // List the leagues the authorized Yahoo account belongs to (current NFL season).
+  "admin:listYahooLeagues": (
+    payload: { code: string; adminToken: string },
+    cb: (ack: { ok: boolean; error?: string; leagues?: YahooLeagueSummary[] }) => void
+  ) => void;
+  // Import one league's teams, rounds & league-scoped ADP into the setup.
+  "admin:importYahooLeague": (
+    payload: { code: string; adminToken: string; leagueKey: string },
+    cb: (ack: { ok: boolean; error?: string; summary?: YahooImportSummary }) => void
   ) => void;
   "pick:make": (
     payload: {

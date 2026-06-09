@@ -1,5 +1,6 @@
 import type { Player, PublicTeam } from "@shared/types";
 import { POSITION_COLORS, formatStatKey } from "../lib/util";
+import { TeamAvatar } from "./TeamAvatar";
 
 interface Props {
   player: Player;
@@ -71,7 +72,7 @@ export function ConfirmPickModal({
           <div className="modal-team">
             Drafting for{" "}
             <strong style={{ color: team.avatarColor }}>
-              {team.emoji} {team.name}
+              <TeamAvatar team={team} /> {team.name}
             </strong>
           </div>
         )}

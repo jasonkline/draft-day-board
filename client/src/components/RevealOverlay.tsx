@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { PickRevealEvent } from "@shared/types";
 import { POSITION_COLORS, formatStatKey } from "../lib/util";
+import { TeamAvatar } from "./TeamAvatar";
 import { playFanfare } from "../lib/sound";
 
 interface Props {
@@ -67,7 +68,7 @@ export function RevealOverlay({
       ) : (
         <div className="reveal-card-wrap">
           <div className="reveal-withpick" style={{ color: team.avatarColor }}>
-            {team.emoji} {team.name} select
+            <TeamAvatar team={team} /> {team.name} select
           </div>
           <div
             className="reveal-card"

@@ -685,6 +685,18 @@ details[open] .extras-summary::before {
   color: #06101f;
   font-size: 0.9rem;
 }
+/* Imported team logo standing in for the emoji avatar. Sized in `em` so it
+   inherits whatever font-size the emoji had in each context. */
+.team-logo {
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: -0.22em;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .order-emoji {
   font-size: 1.2rem;
 }

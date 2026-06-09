@@ -9,6 +9,7 @@ import type {
 import { store, type InternalSession } from "./store.js";
 import { PLAYERS } from "./players.js";
 import { syncPlayerPool } from "./yahoo/sync-core.js";
+import { listLeagues, fetchLeague } from "./yahoo/league.js";
 
 type IO = Server<ClientToServerEvents, ServerToClientEvents>;
 type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -131,6 +132,51 @@ export function registerSocketHandlers(io: IO): void {
         broadcastState(io, s);
         cb({ ok: true, count: players.length });
       } catch (err) {
+        cb({ ok: false, error: errMsg(err) });
+      }
+    });
+
+    socket.on("admin:listYahooLeagues", async ({ code, adminToken }, cb) => {
+      const s = store.get(code);
+      if (!s) return cb({ ok: false, error: "Session not found" });
+      if (!store.isAdmin(s, adminToken)) return cb({ ok: false, error: "Not authorized" });
+      try {
+        const leagues = await listLeagues();
+        cb({ ok: true, leagues });
+      } catch (err) {
+        cb({ ok: false, error: errMsg(err) });
+      }
+    });
+
+    socket.on("admin:importYahooLeague", async ({ code, adminToken, leagueKey }, cb) => {
+      const s = store.get(code);
+      if (!s) return cb({ ok: false, error: "Session not found" });
+      if (!store.isAdmin(s, adminToken)) return cb({ ok: false, error: "Not authorized" });
+      // Rebuilding teams mid-draft would orphan picks, so import is setup-only.
+      if (s.status !== "setup") {
+        return cb({ ok: false, error: "A league can only be imported before the draft starts" });
+      }
+      try {
+        const imp = await fetchLeague(leagueKey);
+        // Apply structure first so the room sees teams/rounds even if the
+        // (slower) player pull fails — that failure is surfaced separately.
+        store.applyImportedLeague(s, imp);
+        const { players } = await syncPlayerPool({ leagueKey });
+        broadcastState(io, s);
+        cb({
+          ok: true,
+          summary: {
+            leagueName: imp.leagueName,
+            numTeams: imp.numTeams,
+            rounds: imp.rounds,
+            scoringLabel: imp.scoringLabel,
+            playerCount: players.length,
+          },
+        });
+      } catch (err) {
+        // Structure may have applied even if the pool sync threw; push whatever
+        // state we have so the board reflects the imported teams.
+        broadcastState(io, s);
         cb({ ok: false, error: errMsg(err) });
       }
     });

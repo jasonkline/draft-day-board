@@ -4,6 +4,7 @@ import type { HeckleFrom, HeckleKind, PickRevealEvent } from "@shared/types";
 import { emit, socket } from "../lib/socket";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
 import { DraftGrid } from "../components/DraftGrid";
+import { TeamAvatar } from "../components/TeamAvatar";
 import { RevealOverlay } from "../components/RevealOverlay";
 import { HeckleOverlay } from "../components/HeckleOverlay";
 import { playDing, playHeckle, unlockAudio } from "../lib/sound";
@@ -216,7 +217,7 @@ export function Board() {
                 className="onclock-team"
                 style={{ color: onClockTeam.avatarColor }}
               >
-                {onClockTeam.emoji} {onClockTeam.name}
+                <TeamAvatar team={onClockTeam} /> {onClockTeam.name}
               </div>
               <div className="onclock-pick">
                 Pick #{state.currentOverall} · Round{" "}
@@ -237,7 +238,7 @@ export function Board() {
                     className="ondeck-team"
                     style={{ color: onDeckTeam.avatarColor }}
                   >
-                    {onDeckTeam.emoji} {onDeckTeam.name}
+                    <TeamAvatar team={onDeckTeam} /> {onDeckTeam.name}
                   </span>
                 </div>
               )}
@@ -281,7 +282,7 @@ export function Board() {
                 </div>
                 <div className="lp-hero-info">
                   <div className="lastpick-overall">
-                    #{latest.pick.overall} · {latest.team.emoji} {latest.team.name}
+                    #{latest.pick.overall} · <TeamAvatar team={latest.team} /> {latest.team.name}
                   </div>
                   <div className="lastpick-name">{latest.player.name}</div>
                   <div
@@ -361,7 +362,7 @@ export function Board() {
                         <div className="rp-meta">
                           <span className="rp-overall">#{pick.overall}</span>
                           <span className="rp-team" title={team.name}>
-                            {team.emoji}
+                            <TeamAvatar team={team} />
                           </span>
                         </div>
                       </div>
@@ -382,7 +383,7 @@ export function Board() {
                     <li key={id}>
                       <span className="wt-num">{i + 1}</span>
                       <span style={{ color: t?.avatarColor }}>
-                        {t?.emoji} {t?.name}
+                        {t && <TeamAvatar team={t} />} {t?.name}
                       </span>
                       {t?.claimed && <span className="wt-claimed">✓</span>}
                     </li>
