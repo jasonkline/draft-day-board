@@ -224,7 +224,10 @@ export function PlayerPool({ state, onSelect, disabled, disabledReason }: Props)
         <div className="pool-locked">{disabledReason}</div>
       )}
 
-      <div className="pool-header" role="row">
+      {/* Header + list share one horizontal scroller so the columns stay
+          aligned when the table is wider than a phone screen. */}
+      <div className="pool-tablewrap">
+        <div className="pool-header" role="row">
         {COLUMNS.map((c) => {
           const active = sortKey === c.key;
           return (
@@ -287,6 +290,7 @@ export function PlayerPool({ state, onSelect, disabled, disabledReason }: Props)
             </button>
           );
         })}
+        </div>
       </div>
     </div>
   );

@@ -26,6 +26,66 @@ body,
   height: 100%;
 }
 
+/* ---------- mobile foundations ---------- */
+/* Kill the blue tap-flash on touch; our :active states give the feedback. */
+button,
+a,
+.chip,
+.toggle,
+.player-row,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS zooms any focused control whose text is < 16px. Float form controls up
+   to 16px on phones so focusing search / selects doesn't jolt the layout. */
+@media (max-width: 560px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Respect reduced-motion everywhere: neutralize the pulses, shakes and
+   infinite box-shadow loops that otherwise churn repaints + drain battery. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Bigger hit targets on touch devices (WCAG 2.5.5 ~44px) without bloating the
+   mouse/TV layouts. */
+@media (pointer: coarse) {
+  .order-moves button {
+    width: 40px;
+    height: 40px;
+  }
+  .stepper-ctl button {
+    width: 44px;
+    height: 44px;
+  }
+  .dur-ctl button {
+    width: 40px;
+    height: 40px;
+  }
+  .chip {
+    padding: 9px 14px;
+  }
+  .btn-small {
+    padding: 10px 14px;
+  }
+  .pool-th {
+    min-height: 38px;
+  }
+}
+
 body {
   background: radial-gradient(1200px 800px at 70% -10%, #16223d 0%, var(--bg) 55%);
   color: var(--text);
@@ -617,7 +677,7 @@ details[open] .extras-summary::before {
 .admin {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 20px 18px 120px;
+  padding: 20px 18px calc(120px + env(safe-area-inset-bottom));
 }
 .admin-head {
   display: flex;
@@ -641,6 +701,12 @@ details[open] .extras-summary::before {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
+}
+/* Grid items default to min-width:auto (min-content), which lets non-wrapping
+   content (toggle hints, steppers) blow the column wider than the viewport.
+   Pin to 0 so the tracks shrink and inner content wraps instead. */
+.admin-cols > * {
+  min-width: 0;
 }
 .admin-cols .card:last-child {
   grid-column: 1 / -1;
@@ -736,9 +802,17 @@ details[open] .extras-summary::before {
   gap: 12px;
   justify-content: flex-end;
   align-items: center;
+  /* Let the error toast + buttons wrap on narrow screens, and clear the iOS
+     home indicator with the safe-area inset. */
+  flex-wrap: wrap;
   padding: 14px 20px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, transparent, var(--bg) 40%);
   backdrop-filter: blur(6px);
+}
+.admin-startbar .toast-error {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .onclock-strip {
@@ -766,6 +840,27 @@ details[open] .extras-summary::before {
   gap: 16px;
   font-weight: 800;
   font-size: 1.3rem;
+  white-space: nowrap;
+  flex: none;
+}
+/* Long team names shouldn't shove the pick #/timer off the row. */
+.onclock-strip > div:first-child {
+  min-width: 0;
+}
+.strip-team {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .strip-team {
+    font-size: 1.3rem;
+  }
+  .strip-right {
+    gap: 12px;
+    font-size: 1.1rem;
+  }
 }
 .mode-note {
   color: var(--muted);
@@ -935,6 +1030,9 @@ details[open] .extras-summary::before {
   margin-bottom: 8px;
   text-align: center;
 }
+.pool-tablewrap {
+  width: 100%;
+}
 .pool-list {
   max-height: 56vh;
   overflow-y: auto;
@@ -1061,6 +1159,45 @@ details[open] .extras-summary::before {
   color: var(--gold);
 }
 
+/* On phones the 6-column table can't fit; rather than crushing the player
+   name to a few characters, let the table scroll sideways at full size and
+   let the page take the vertical scroll. */
+@media (max-width: 560px) {
+  .pool-tablewrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .pool-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+  .pool-header,
+  .player-row {
+    /* Wide enough that the 1fr name column shows most full names before the
+       numeric columns scroll into view. */
+    min-width: 520px;
+  }
+  /* Stack the filter controls so the bye popover spans the row instead of
+     escaping the right edge of the viewport. */
+  .pool-selects {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pool-select,
+  .pool-select select,
+  .bye-dd,
+  .bye-dd > summary {
+    width: 100%;
+    max-width: none;
+  }
+  .bye-panel {
+    left: 0;
+    right: 0;
+    min-width: 0;
+  }
+}
+
 /* ---------- confirm modal ---------- */
 .modal-backdrop {
   position: fixed;
@@ -1080,6 +1217,10 @@ details[open] .extras-summary::before {
   padding: 26px;
   max-width: 440px;
   width: 100%;
+  /* On short screens (small phones, landscape) the card can be taller than
+     the viewport — scroll it so the Cancel / Lock-In buttons stay reachable. */
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   text-align: center;
   box-shadow: var(--shadow);
   animation: pop 0.22s cubic-bezier(0.18, 0.9, 0.3, 1.3);
@@ -1225,12 +1366,26 @@ details[open] .extras-summary::before {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* On phones the fixed-width label squeezes the URL to nothing — stack the
+   label above the URL + copy button. */
+@media (max-width: 560px) {
+  .share-row {
+    flex-wrap: wrap;
+  }
+  .share-label {
+    width: 100%;
+  }
+  .share-url {
+    flex: 1;
+    min-width: 0;
+  }
+}
 
 /* ---------- play (phone) ---------- */
 .play {
   max-width: 560px;
   margin: 0 auto;
-  padding: 16px 14px 60px;
+  padding: 16px 14px calc(60px + env(safe-area-inset-bottom));
 }
 .play-head {
   text-align: center;
