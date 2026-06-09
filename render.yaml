@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: draft-day-board
+    runtime: node
+    plan: free
+    # Build the client (Vite) then the server (tsc); see root package.json.
+    buildCommand: npm install && npm run build
+    # Serves client/dist + Socket.IO on $PORT (Render injects PORT).
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

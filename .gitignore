@@ -6,7 +6,9 @@ server/dist/
 client/dist/
 
 # runtime session persistence
-server/data/
+server/data/*
+# ...but ship the synced player pool so deployments have real data
+!server/data/players-yahoo.json
 
 # secrets / env (keep .env.example tracked)
 .env
