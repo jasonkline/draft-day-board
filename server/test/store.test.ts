@@ -1,11 +1,35 @@
 import { describe, it, expect } from "vitest";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SessionStore } from "../src/store.js";
 import { PLAYERS } from "../src/players.js";
+import type { Player } from "../../shared/types.js";
+
+const POOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "pools");
 
 function freshSession() {
   const store = new SessionStore();
   const s = store.create("Test League", ["Alpha", "Bravo", "Charlie", "Delta"]);
   return { store, s };
+}
+
+// A tiny stand-in pool with players that don't exist in the universal dataset,
+// so we can prove a session draws from its own pool.
+function fakePool(prefix: string): Player[] {
+  return ["QB", "RB", "WR"].map((pos, i) => ({
+    id: `${prefix}-${i}`,
+    name: `${prefix} Player ${i}`,
+    position: pos as Player["position"],
+    nflTeam: "FA",
+    byeWeek: 7,
+    rank: i + 1,
+    positionRank: 1,
+    adp: i + 1,
+    projectedPoints: 100 - i,
+    stats: {},
+    blurb: "",
+  }));
 }
 
 describe("players dataset", () => {
@@ -243,5 +267,58 @@ describe("applyImportedLeague (Yahoo import)", () => {
         rounds: 12,
       })
     ).toThrow(/locked/);
+  });
+});
+
+describe("session-scoped player pools", () => {
+  it("falls back to the universal pool when none is set", () => {
+    const { store, s } = freshSession();
+    expect(store.playersFor(s)).toBe(PLAYERS);
+    expect(store.toPublicState(s).players).toBe(PLAYERS);
+  });
+
+  it("uses the session pool after import without touching the universal pool", () => {
+    const { store, s } = freshSession();
+    const pool = fakePool("alpha");
+    store.setSessionPlayers(s, pool);
+    expect(store.playersFor(s)).toBe(pool);
+    expect(store.toPublicState(s).players).toBe(pool);
+    // the universal pool is untouched
+    expect(PLAYERS.some((p) => p.id === "alpha-0")).toBe(false);
+  });
+
+  it("isolates pools between sessions", () => {
+    const store = new SessionStore();
+    const a = store.create("A", ["A1", "A2"]);
+    const b = store.create("B", ["B1", "B2"]);
+    store.setSessionPlayers(a, fakePool("alpha"));
+    // b is unaffected — still on the universal pool
+    expect(store.playersFor(b)).toBe(PLAYERS);
+    expect(store.playersFor(a)).not.toBe(store.playersFor(b));
+  });
+
+  it("lets a session draft a player that exists only in its own pool", () => {
+    const { store, s } = freshSession();
+    store.setSessionPlayers(s, fakePool("alpha"));
+    store.startDraft(s);
+    const onClock = store.toPublicState(s).onClockTeamId!;
+    const pick = store.applyPick(s, "alpha-0", onClock);
+    expect(pick.playerId).toBe("alpha-0");
+  });
+
+  it("writes a sidecar file on import and removes it on clear", () => {
+    const { store, s } = freshSession();
+    store.setSessionPlayers(s, fakePool("alpha"));
+    const sidecar = join(POOLS_DIR, `${s.code}.json`);
+    expect(existsSync(sidecar)).toBe(true);
+    store.clearSessionPlayers(s);
+    expect(existsSync(sidecar)).toBe(false);
+    expect(store.playersFor(s)).toBe(PLAYERS);
+  });
+
+  it("is setup-only", () => {
+    const { store, s } = freshSession();
+    store.startDraft(s);
+    expect(() => store.setSessionPlayers(s, fakePool("alpha"))).toThrow(/locked/);
   });
 });

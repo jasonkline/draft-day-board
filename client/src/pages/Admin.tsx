@@ -355,7 +355,8 @@ function SetupView({
           <h2>Player Data</h2>
           <p className="hint">
             {state.players.length} players loaded. Pull the latest Yahoo rankings,
-            ADP &amp; injuries before you draft.
+            ADP &amp; injuries before you draft. This refreshes the universal pool;
+            a league you imported above keeps its own league-scoped ADP.
           </p>
           <button className="btn btn-small" onClick={refreshPlayers} disabled={refreshing}>
             {refreshing ? "Refreshing…" : "↻ Refresh from Yahoo"}

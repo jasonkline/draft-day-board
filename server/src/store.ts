@@ -1,5 +1,5 @@
 import { customAlphabet } from "nanoid";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -15,6 +15,11 @@ import { slotForOverall, teamIdForOverall, totalPicks } from "./draft.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, "..", "data");
 const DATA_FILE = join(DATA_DIR, "sessions.json");
+// Per-session imported player pools live as sidecar files here, keyed by code,
+// so they survive restarts without bloating sessions.json (which is rewritten
+// on every pick). Gitignored alongside the rest of server/data.
+const POOLS_DIR = join(DATA_DIR, "pools");
+const poolFile = (code: string) => join(POOLS_DIR, `${code}.json`);
 
 // Unambiguous code alphabet (no 0/O/1/I) for easy reading off a TV / typing on a phone.
 const codeId = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 5);
@@ -43,6 +48,10 @@ export interface InternalSession {
   picks: Pick[];
   createdAt: number;
   updatedAt: number;
+  // Session-scoped player pool from a Yahoo league import. When undefined the
+  // session uses the universal PLAYERS pool. Persisted as a sidecar file, never
+  // inlined into sessions.json.
+  players?: Player[];
 }
 
 function defaultConfig(leagueName: string): DraftConfig {
@@ -102,6 +111,8 @@ export class SessionStore {
         // Backfill config fields added after this session was persisted, so the
         // new presentation toggles don't read as undefined (≈ everything off).
         s.config = { ...defaultConfig(s.config.leagueName), ...s.config };
+        // Rehydrate the session's imported pool from its sidecar, if any.
+        s.players = this.loadPoolSidecar(s.code);
         this.sessions.set(s.code, s);
       }
       // eslint-disable-next-line no-console
@@ -117,11 +128,31 @@ export class SessionStore {
       this.saveTimer = null;
       try {
         mkdirSync(DATA_DIR, { recursive: true });
-        writeFileSync(DATA_FILE, JSON.stringify([...this.sessions.values()]));
+        // `players` is a per-session sidecar — keep it out of sessions.json so
+        // the file stays small (it's rewritten on every pick).
+        writeFileSync(
+          DATA_FILE,
+          JSON.stringify([...this.sessions.values()], (k, v) =>
+            k === "players" ? undefined : v
+          )
+        );
       } catch (err) {
         console.error("[store] failed to save sessions:", err);
       }
     }, 250);
+  }
+
+  /** Read a session's imported pool sidecar, or undefined if none/invalid. */
+  private loadPoolSidecar(code: string): Player[] | undefined {
+    const path = poolFile(code);
+    if (!existsSync(path)) return undefined;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Player[];
+    } catch (err) {
+      console.error(`[store] failed to read pool sidecar for ${code}:`, err);
+    }
+    return undefined;
   }
 
   // ---- lifecycle ----
@@ -169,6 +200,11 @@ export class SessionStore {
     this.scheduleSave();
   }
 
+  /** The pool this session draws from: its imported pool, else the universal one. */
+  playersFor(s: InternalSession): Player[] {
+    return s.players ?? PLAYERS;
+  }
+
   // ---- derived public state ----
   toPublicState(s: InternalSession): SessionState {
     const total = totalPicks(s.teams.length, s.config.rounds);
@@ -192,7 +228,7 @@ export class SessionStore {
       config: s.config,
       teams: s.teams.map(({ token, ...rest }) => rest),
       draftOrder: s.draftOrder,
-      players: PLAYERS,
+      players: this.playersFor(s),
       picks: s.picks,
       currentOverall,
       onClockTeamId,
@@ -278,6 +314,37 @@ export class SessionStore {
     this.touch(s);
   }
 
+  /**
+   * Set a session-scoped player pool (e.g. a league-scoped Yahoo pull) without
+   * touching the universal pool or any other session. Persisted as a sidecar
+   * file so it survives a mid-draft restart. Setup-only.
+   */
+  setSessionPlayers(s: InternalSession, players: Player[]): void {
+    this.assertSetup(s);
+    if (!Array.isArray(players) || players.length === 0)
+      throw new Error("Imported player pool is empty");
+    s.players = players;
+    try {
+      mkdirSync(POOLS_DIR, { recursive: true });
+      writeFileSync(poolFile(s.code), JSON.stringify(players));
+    } catch (err) {
+      console.error(`[store] failed to write pool sidecar for ${s.code}:`, err);
+    }
+    this.touch(s);
+  }
+
+  /** Drop a session's imported pool, reverting it to the universal one. */
+  clearSessionPlayers(s: InternalSession): void {
+    this.assertSetup(s);
+    delete s.players;
+    try {
+      rmSync(poolFile(s.code), { force: true });
+    } catch (err) {
+      console.error(`[store] failed to remove pool sidecar for ${s.code}:`, err);
+    }
+    this.touch(s);
+  }
+
   updateTeams(s: InternalSession, updates: { id: string; name: string }[]): void {
     this.assertSetup(s);
     for (const u of updates) {
@@ -336,7 +403,7 @@ export class SessionStore {
     if (actingTeamId !== onClock)
       throw new Error("It is not that team's turn to pick");
 
-    const player = PLAYERS.find((p) => p.id === playerId);
+    const player = this.playersFor(s).find((p) => p.id === playerId);
     if (!player) throw new Error("Unknown player");
     if (s.picks.some((p) => p.playerId === playerId))
       throw new Error("Player already drafted");

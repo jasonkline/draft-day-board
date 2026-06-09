@@ -7,8 +7,8 @@ import type {
   HeckleFrom,
 } from "../../shared/types.js";
 import { store, type InternalSession } from "./store.js";
-import { PLAYERS } from "./players.js";
 import { syncPlayerPool } from "./yahoo/sync-core.js";
+import { fetchPlayerPool } from "./yahoo/pool.js";
 import { listLeagues, fetchLeague } from "./yahoo/league.js";
 
 type IO = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -161,7 +161,10 @@ export function registerSocketHandlers(io: IO): void {
         // Apply structure first so the room sees teams/rounds even if the
         // (slower) player pull fails — that failure is surfaced separately.
         store.applyImportedLeague(s, imp);
-        const { players } = await syncPlayerPool({ leagueKey });
+        // Scope the league-adjusted ADP to THIS session only — never touch the
+        // universal pool or other sessions.
+        const players = await fetchPlayerPool({ leagueKey });
+        store.setSessionPlayers(s, players);
         broadcastState(io, s);
         cb({
           ok: true,
@@ -198,7 +201,7 @@ export function registerSocketHandlers(io: IO): void {
         io.to(room(s.code)).emit("state:update", snapshot);
 
         // ...then fire the dramatic reveal for the room (board animates + dings).
-        const player = PLAYERS.find((p) => p.id === pick.playerId)!;
+        const player = store.playersFor(s).find((p) => p.id === pick.playerId)!;
         const team = s.teams.find((t) => t.id === pick.teamId)!;
         const { token, ...publicTeam } = team;
         const reveal: PickRevealEvent = {
