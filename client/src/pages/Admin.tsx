@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { DraftConfig, Player, SessionState } from "@shared/types";
+import type { DraftConfig, HeckleKind, Player, SessionState } from "@shared/types";
 import { emit } from "../lib/socket";
 import { getAdminToken } from "../lib/storage";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
@@ -572,11 +572,24 @@ function DraftView({
   const [selected, setSelected] = useState<Player | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [heckleCooldown, setHeckleCooldown] = useState(false);
   const secondsLeft = useCountdown(state.pickDeadline);
 
   const onClockTeam = teamById(state, state.onClockTeamId);
   const isComplete = state.status === "complete";
   const selfMode = state.config.mode === "self";
+  // NSFW: the commissioner can always blast a heckle on the big screen while
+  // the draft is live (the server gates the cooldown + per-kind toggle).
+  const canHeckle =
+    state.config.nsfw &&
+    state.status === "drafting" &&
+    (state.config.hurryUpButton || state.config.bruhButton);
+
+  async function heckle(kind: HeckleKind) {
+    setHeckleCooldown(true);
+    await emit("fan:heckle", { code, kind });
+    setTimeout(() => setHeckleCooldown(false), 2600);
+  }
 
   const patchConfig = (patch: Partial<DraftConfig>) =>
     emit("admin:updateConfig", { code, adminToken, config: patch });
@@ -655,6 +668,35 @@ function DraftView({
           ↩︎ Undo last pick
         </button>
       </div>
+
+      {canHeckle && (
+        <div className="heckle-bar">
+          {state.config.hurryUpButton && (
+            <button
+              className="htfu-btn"
+              onClick={() => heckle("hurryUp")}
+              disabled={heckleCooldown}
+            >
+              😤 HURRY THE F#@% UP
+              <small>
+                {heckleCooldown ? "…take a breath…" : "Blast it on the big screen"}
+              </small>
+            </button>
+          )}
+          {state.config.bruhButton && (
+            <button
+              className="htfu-btn htfu-btn-bruh"
+              onClick={() => heckle("bruh")}
+              disabled={heckleCooldown}
+            >
+              🤦 BRUH… YOU STUPID
+              <small>
+                {heckleCooldown ? "…take a breath…" : "Blast it on the big screen"}
+              </small>
+            </button>
+          )}
+        </div>
+      )}
 
       <details className="card extras-card extras-live">
         <summary className="extras-summary">
