@@ -887,6 +887,47 @@ details[open] .extras-summary::before {
   margin-bottom: 14px;
 }
 
+/* ---------- push-to-Yahoo panel ---------- */
+.yx-panel .yx-warn {
+  color: #ffd9a8;
+}
+.yx-steps {
+  margin: 6px 0 14px;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+.yx-steps a {
+  color: var(--accent, #7cc4ff);
+  text-decoration: underline;
+}
+.yx-codebox {
+  display: grid;
+  gap: 4px;
+}
+.yx-codebox > label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  opacity: 0.85;
+}
+.yx-coperow {
+  display: flex;
+  gap: 8px;
+}
+.yx-code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text, #e8eef6);
+}
+
 /* ---------- player pool ---------- */
 .pool {
   background: var(--panel);

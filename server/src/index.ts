@@ -9,6 +9,8 @@ import type {
   ServerToClientEvents,
 } from "../../shared/types.js";
 import { registerSocketHandlers } from "./socket.js";
+import { store } from "./store.js";
+import { buildDraftExport } from "./yahoo/export.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 4000;
@@ -49,6 +51,30 @@ registerSocketHandlers(io);
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
+});
+
+// Push-to-Yahoo: the offline-draft importer userscript runs ON yahoo.com and
+// fetches the finished draft (picks keyed to Yahoo player ids) from here. It's a
+// cross-origin call guarded solely by the session's admin token (no cookies are
+// involved), so a wildcard CORS origin is safe — the 24-char token is the only
+// credential and brute-forcing it is infeasible.
+app.options("/api/yahoo/export", (_req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.sendStatus(204);
+});
+app.post("/api/yahoo/export", express.json({ limit: "16kb" }), (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  const { code, adminToken } = (req.body ?? {}) as {
+    code?: string;
+    adminToken?: string;
+  };
+  const s = code ? store.get(code) : undefined;
+  if (!s) return res.status(404).json({ ok: false, error: "Session not found" });
+  if (!store.isAdmin(s, adminToken))
+    return res.status(403).json({ ok: false, error: "Not authorized" });
+  res.json({ ok: true, export: buildDraftExport(s) });
 });
 
 // Lock down what the app's pages may load/run: only our own scripts, images

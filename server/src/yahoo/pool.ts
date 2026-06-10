@@ -66,6 +66,7 @@ interface RawPlayer {
   adp: number | null; // real average draft pick (lower = better); null if undrafted
   percentDrafted: number | null;
   headshotUrl?: string;
+  playerKey?: string; // Yahoo player key, e.g. "nfl.p.40055"
 }
 
 /** Map one Yahoo `player` entry (array form) into our intermediate shape. */
@@ -84,6 +85,9 @@ function mapRawPlayer(entry: any): RawPlayer | null {
 
   const nflTeam = String(meta.editorial_team_abbr ?? "FA").toUpperCase();
   const byeWeek = Number(flatten(meta.bye_weeks).week ?? 0) || 0;
+  // Yahoo's canonical player key (e.g. "nfl.p.40055"); its numeric suffix is the
+  // `pid` the offline-draft results form expects when pushing picks back to Yahoo.
+  const playerKey = typeof meta.player_key === "string" ? meta.player_key : undefined;
 
   const headshotUrl = unwrapHeadshot(
     flatten(meta.headshot).url ??
@@ -104,7 +108,7 @@ function mapRawPlayer(entry: any): RawPlayer | null {
     }
   }
 
-  return { name, position, nflTeam, byeWeek, adp, percentDrafted, headshotUrl };
+  return { name, position, nflTeam, byeWeek, adp, percentDrafted, headshotUrl, playerKey };
 }
 
 /**
@@ -244,6 +248,7 @@ export async function fetchPlayerPool(opts: FetchPoolOptions = {}): Promise<Play
       blurb: buildBlurb(raw),
     };
     if (raw.headshotUrl) player.headshotUrl = raw.headshotUrl;
+    if (raw.playerKey) player.yahooPlayerKey = raw.playerKey;
     return player;
   });
 }

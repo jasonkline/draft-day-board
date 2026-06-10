@@ -11,6 +11,7 @@ import { emit } from "../lib/socket";
 import { getAdminToken } from "../lib/storage";
 import { useSessionState, useReveal, useCountdown } from "../lib/useDraft";
 import { ShareLinks } from "../components/ShareLinks";
+import { YahooExportPanel } from "../components/YahooExportPanel";
 import { PlayerPool } from "../components/PlayerPool";
 import { ConfirmPickModal } from "../components/ConfirmPickModal";
 import { TeamAvatar } from "../components/TeamAvatar";
@@ -716,7 +717,10 @@ function DraftView({
       </header>
 
       {isComplete ? (
-        <div className="complete-banner">🎉 Draft complete! {state.totalPicks} picks made.</div>
+        <>
+          <div className="complete-banner">🎉 Draft complete! {state.totalPicks} picks made.</div>
+          <YahooExportPanel state={state} code={code} adminToken={adminToken} />
+        </>
       ) : (
         <div
           className="onclock-strip"

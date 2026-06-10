@@ -21,6 +21,11 @@ export interface Player {
   blurb: string;
   // Optional player headshot (populated from real data sources like Yahoo).
   headshotUrl?: string;
+  // Yahoo player key (e.g. "nfl.p.40055") when sourced from Yahoo. The numeric
+  // suffix is the `pid` Yahoo's offline-draft results form expects, enabling an
+  // exact (non-fuzzy) push of finished picks back into a Yahoo league. Absent
+  // for the built-in dataset.
+  yahooPlayerKey?: string;
 }
 
 export interface Team {
@@ -160,6 +165,37 @@ export interface YahooImportSummary {
   rounds: number;
   scoringLabel: string; // refined with PPR detection, e.g. "12-team · Full PPR"
   playerCount: number; // players pulled with league-scoped ADP
+}
+
+// ---- Pushing a finished draft back into Yahoo (offline "Submit Draft Results") ----
+// The importer userscript runs on yahoo.com and fetches this from the server. It
+// maps our picks to the numeric player ids Yahoo's offline-draft form expects.
+
+export interface YahooExportPick {
+  round: number;
+  pid: string; // Yahoo numeric player id (the player_key suffix, e.g. "40055")
+  playerName: string;
+  position: PlayerPosition;
+}
+
+export interface YahooExportTeam {
+  // 1-based slot in the league team list — matches the order of Yahoo's team
+  // dropdown on the offline-draft form (the league was imported in this order).
+  order: number;
+  name: string;
+  picks: YahooExportPick[]; // sorted by round ascending → drops into Yahoo's pick slots
+  missing: number; // this team's drafted players with no Yahoo id (can't be pushed)
+}
+
+export interface YahooDraftExport {
+  code: string;
+  leagueName: string;
+  rounds: number;
+  status: SessionStatus;
+  complete: boolean;
+  generatedAt: number;
+  teams: YahooExportTeam[];
+  warnings: string[];
 }
 
 // Client -> server events
