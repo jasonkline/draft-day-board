@@ -1,15 +1,5 @@
 import { customAlphabet } from "nanoid";
 import { timingSafeEqual } from "node:crypto";
-import {
-  chmodSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  rmSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
   DraftConfig,
   Pick,
@@ -19,15 +9,11 @@ import type {
 } from "../../shared/types.js";
 import { PLAYERS } from "./players.js";
 import { slotForOverall, teamIdForOverall, totalPicks } from "./draft.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, "..", "data");
-const DATA_FILE = join(DATA_DIR, "sessions.json");
-// Per-session imported player pools live as sidecar files here, keyed by code,
-// so they survive restarts without bloating sessions.json (which is rewritten
-// on every pick). Gitignored alongside the rest of server/data.
-const POOLS_DIR = join(DATA_DIR, "pools");
-const poolFile = (code: string) => join(POOLS_DIR, `${code}.json`);
+import {
+  createBackend,
+  FileBackend,
+  type PersistenceBackend,
+} from "./persistence.js";
 
 // Unambiguous code alphabet (no 0/O/1/I) for easy reading off a TV / typing on a phone.
 const codeId = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 5);
@@ -121,71 +107,82 @@ const LIVE_CONFIG_KEYS = new Set<keyof DraftConfig>([
 export class SessionStore {
   private sessions = new Map<string, InternalSession>();
   private saveTimer: NodeJS.Timeout | null = null;
+  private savePromise: Promise<void> = Promise.resolve();
+  private saveQueued = false;
 
-  constructor() {
-    this.load();
-    this.cleanupIdle();
+  constructor(private backend: PersistenceBackend = new FileBackend()) {
     setInterval(() => this.cleanupIdle(), 60 * 60 * 1000).unref();
   }
 
   // ---- persistence ----
-  private load(): void {
+  /** Load persisted state. Must be awaited before the server accepts connections. */
+  async init(): Promise<void> {
     try {
-      if (!existsSync(DATA_FILE)) return;
-      // writeFileSync's mode only applies on creation — retro-tighten files
-      // written before permissions were locked down (they hold every token).
-      chmodSync(DATA_FILE, 0o600);
-      const raw = readFileSync(DATA_FILE, "utf8");
-      const arr = JSON.parse(raw) as InternalSession[];
-      for (const s of arr) {
+      const { sessions, pools } = await this.backend.load();
+      for (const s of sessions) {
         // Backfill config fields added after this session was persisted, so the
         // new presentation toggles don't read as undefined (≈ everything off).
         s.config = { ...defaultConfig(s.config.leagueName), ...s.config };
-        // Rehydrate the session's imported pool from its sidecar, if any.
-        s.players = this.loadPoolSidecar(s.code);
+        // Rehydrate the session's imported pool, if any.
+        s.players = pools.get(s.code);
         this.sessions.set(s.code, s);
       }
       // eslint-disable-next-line no-console
-      console.log(`[store] loaded ${arr.length} session(s) from disk`);
+      console.log(`[store] loaded ${sessions.length} session(s)`);
     } catch (err) {
       console.error("[store] failed to load sessions:", err);
+      throw err;
     }
+    this.cleanupIdle();
   }
 
   private scheduleSave(): void {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      try {
-        // sessions.json holds every session's capability tokens — keep it
-        // readable by this user only.
-        mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-        // `players` is a per-session sidecar — keep it out of sessions.json so
-        // the file stays small (it's rewritten on every pick).
-        writeFileSync(
-          DATA_FILE,
-          JSON.stringify([...this.sessions.values()], (k, v) =>
-            k === "players" ? undefined : v
-          ),
-          { mode: 0o600 }
-        );
-      } catch (err) {
-        console.error("[store] failed to save sessions:", err);
-      }
+      void this.flush();
     }, 250);
   }
 
-  /** Read a session's imported pool sidecar, or undefined if none/invalid. */
-  private loadPoolSidecar(code: string): Player[] | undefined {
-    const path = poolFile(code);
-    if (!existsSync(path)) return undefined;
-    try {
-      const parsed = JSON.parse(readFileSync(path, "utf8"));
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Player[];
-    } catch (err) {
-      console.error(`[store] failed to read pool sidecar for ${code}:`, err);
+  /**
+   * Serialized snapshot save. The Postgres backend is async, so overlapping
+   * flushes must not interleave: saves are chained on a promise queue, with at
+   * most one queued behind the in-flight one. The snapshot is taken when the
+   * save runs, so the last write always carries the latest state. The file
+   * backend completes synchronously inside the chain — timing is effectively
+   * unchanged from the original writeFileSync-in-setTimeout.
+   */
+  private flush(): Promise<void> {
+    if (this.saveQueued) return this.savePromise;
+    this.saveQueued = true;
+    this.savePromise = this.savePromise.then(async () => {
+      this.saveQueued = false;
+      try {
+        await this.backend.saveSessions([...this.sessions.values()]);
+      } catch (err) {
+        console.error("[store] failed to save sessions:", err);
+      }
+    });
+    return this.savePromise;
+  }
+
+  /** Cancel any pending debounce and persist now (shutdown hook). */
+  async flushNow(): Promise<void> {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
     }
-    return undefined;
+    await this.flush();
+  }
+
+  /** Run a backend write, logging sync throws and async rejections alike. */
+  private persist(label: string, op: () => void | Promise<void>): void {
+    try {
+      const r = op();
+      if (r) r.catch((err) => console.error(`[store] ${label}:`, err));
+    } catch (err) {
+      console.error(`[store] ${label}:`, err);
+    }
   }
 
   // ---- lifecycle ----
@@ -237,6 +234,145 @@ export class SessionStore {
     return this.sessions.get(code?.toUpperCase?.() ?? code);
   }
 
+  /**
+   * Recreate a session from a backup file (wipe insurance for ephemeral
+   * hosting). The backup is admin-held and contains the tokens, but every
+   * field is still validated/normalized — picks are rebuilt through the same
+   * draft math as live picks so a tampered file can't produce an inconsistent
+   * board. Throws with a human-readable message on invalid input.
+   */
+  restore(raw: InternalSession): InternalSession {
+    if (!raw || typeof raw !== "object") throw new Error("Invalid backup file");
+    const code = typeof raw.code === "string" ? raw.code.toUpperCase() : "";
+    if (!/^[A-Z2-9]{5}$/.test(code))
+      throw new Error("Backup has an invalid session code");
+    if (typeof raw.adminToken !== "string" || raw.adminToken.length !== 24)
+      throw new Error("Backup has an invalid admin token");
+    if (
+      !Array.isArray(raw.teams) ||
+      raw.teams.length < 2 ||
+      raw.teams.length > MAX_TEAMS
+    )
+      throw new Error("Backup has an invalid team list");
+
+    if (!this.sessions.has(code) && this.sessions.size >= MAX_SESSIONS) {
+      this.cleanupIdle();
+      if (this.sessions.size >= MAX_SESSIONS)
+        throw new Error("Server is at capacity — try again later");
+    }
+
+    const teams: Team[] = raw.teams.map((t, i) => {
+      if (
+        !t ||
+        typeof t !== "object" ||
+        typeof t.id !== "string" ||
+        typeof t.token !== "string" ||
+        t.token.length !== 24
+      )
+        throw new Error(`Backup team ${i + 1} is invalid`);
+      const team: Team = {
+        id: t.id.slice(0, 16),
+        name:
+          (typeof t.name === "string" && t.name.trim()
+            ? t.name.trim()
+            : `Team ${i + 1}`
+          ).slice(0, 40),
+        token: t.token,
+        claimed: Boolean(t.claimed),
+        avatarColor:
+          typeof t.avatarColor === "string"
+            ? t.avatarColor.slice(0, 16)
+            : TEAM_COLORS[i % TEAM_COLORS.length],
+        emoji:
+          typeof t.emoji === "string"
+            ? t.emoji.slice(0, 8)
+            : TEAM_EMOJI[i % TEAM_EMOJI.length],
+      };
+      // Same rule as league import: this URL is rendered as an <img src> on
+      // every client, so only https may pass.
+      if (typeof t.logoUrl === "string" && t.logoUrl.startsWith("https://"))
+        team.logoUrl = t.logoUrl.slice(0, 300);
+      return team;
+    });
+    const ids = new Set(teams.map((t) => t.id));
+    if (ids.size !== teams.length)
+      throw new Error("Backup has duplicate team ids");
+
+    const rawOrder = Array.isArray(raw.draftOrder) ? raw.draftOrder : [];
+    const orderValid =
+      rawOrder.length === teams.length &&
+      rawOrder.every((id) => typeof id === "string" && ids.has(id)) &&
+      new Set(rawOrder).size === rawOrder.length;
+    const draftOrder = orderValid ? [...rawOrder] : teams.map((t) => t.id);
+
+    const rawConfig =
+      raw.config && typeof raw.config === "object" ? raw.config : ({} as DraftConfig);
+    const config = sanitizeConfig({
+      ...defaultConfig(
+        typeof rawConfig.leagueName === "string" ? rawConfig.leagueName : ""
+      ),
+      ...rawConfig,
+    });
+
+    // Rebuild picks through the same math as live drafting: slot and team are
+    // re-derived from position, so the restored board is always self-consistent.
+    const total = totalPicks(teams.length, config.rounds);
+    const rawPicks = Array.isArray(raw.picks) ? raw.picks.slice(0, total) : [];
+    const seenPlayers = new Set<string>();
+    const picks: Pick[] = rawPicks.map((p, i) => {
+      const overall = i + 1;
+      const playerId =
+        p && typeof p === "object" && typeof p.playerId === "string"
+          ? p.playerId.slice(0, 80)
+          : "";
+      if (!playerId || seenPlayers.has(playerId))
+        throw new Error(`Backup pick ${overall} is invalid`);
+      seenPlayers.add(playerId);
+      const { round, pickInRound } = slotForOverall(overall, teams.length);
+      return {
+        overall,
+        round,
+        pickInRound,
+        teamId: teamIdForOverall(overall, draftOrder, config.draftStyle),
+        playerId,
+        timestamp: typeof p.timestamp === "number" ? p.timestamp : Date.now(),
+      };
+    });
+
+    const status: SessionState["status"] =
+      total > 0 && picks.length >= total
+        ? "complete"
+        : picks.length > 0 || raw.status === "drafting"
+          ? "drafting"
+          : "setup";
+
+    const session: InternalSession = {
+      code,
+      adminToken: raw.adminToken,
+      status,
+      config,
+      teams,
+      draftOrder,
+      picks,
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (Array.isArray(raw.players) && raw.players.length > 0) {
+      session.players = raw.players;
+      this.persist(`failed to persist pool for ${code}`, () =>
+        this.backend.savePool(code, session.players!)
+      );
+    } else {
+      // Restoring over an existing session: don't let a stale pool linger.
+      this.persist(`failed to remove pool for ${code}`, () =>
+        this.backend.deletePool(code)
+      );
+    }
+    this.sessions.set(code, session);
+    this.scheduleSave();
+    return session;
+  }
+
   /** Drop sessions idle past the TTL (and their pool sidecars). */
   private cleanupIdle(): void {
     const cutoff = Date.now() - SESSION_TTL_MS;
@@ -244,11 +380,10 @@ export class SessionStore {
     for (const [code, s] of this.sessions) {
       if (s.updatedAt < cutoff) {
         this.sessions.delete(code);
-        try {
-          rmSync(poolFile(code), { force: true });
-        } catch {
-          // best-effort sidecar cleanup
-        }
+        // best-effort pool cleanup
+        this.persist(`failed to remove pool for ${code}`, () =>
+          this.backend.deletePool(code)
+        );
         removed++;
       }
     }
@@ -313,28 +448,7 @@ export class SessionStore {
       if (locked.length)
         throw new Error("Draft has started — only sound & reveal settings can change");
     }
-    const next = { ...s.config, ...patch };
-    next.rounds = clamp(Math.round(next.rounds), 1, 30);
-    next.secondsPerPick = clamp(Math.round(next.secondsPerPick), 0, 600);
-    if (next.draftStyle !== "snake" && next.draftStyle !== "linear")
-      next.draftStyle = "snake";
-    if (next.mode !== "commissioner" && next.mode !== "self")
-      next.mode = "commissioner";
-    next.leagueName = (next.leagueName || "Fantasy Draft").slice(0, 60);
-    next.sounds = Boolean(next.sounds);
-    next.announcementVisual = Boolean(next.announcementVisual);
-    next.announcementSound = Boolean(next.announcementSound);
-    next.announcementSeconds = clamp(Math.round(next.announcementSeconds), 1, 30);
-    next.revealVisual = Boolean(next.revealVisual);
-    next.revealSound = Boolean(next.revealSound);
-    next.revealSeconds = clamp(Math.round(next.revealSeconds), 3, 60);
-    next.showPositionRuns = Boolean(next.showPositionRuns);
-    next.showValueBadges = Boolean(next.showValueBadges);
-    next.showOnDeck = Boolean(next.showOnDeck);
-    next.nsfw = Boolean(next.nsfw);
-    next.hurryUpButton = Boolean(next.hurryUpButton);
-    next.bruhButton = Boolean(next.bruhButton);
-    s.config = next;
+    s.config = sanitizeConfig({ ...s.config, ...patch });
     this.touch(s);
   }
 
@@ -390,12 +504,9 @@ export class SessionStore {
     if (!Array.isArray(players) || players.length === 0)
       throw new Error("Imported player pool is empty");
     s.players = players;
-    try {
-      mkdirSync(POOLS_DIR, { recursive: true });
-      writeFileSync(poolFile(s.code), JSON.stringify(players));
-    } catch (err) {
-      console.error(`[store] failed to write pool sidecar for ${s.code}:`, err);
-    }
+    this.persist(`failed to persist pool for ${s.code}`, () =>
+      this.backend.savePool(s.code, players)
+    );
     this.touch(s);
   }
 
@@ -403,11 +514,9 @@ export class SessionStore {
   clearSessionPlayers(s: InternalSession): void {
     this.assertSetup(s);
     delete s.players;
-    try {
-      rmSync(poolFile(s.code), { force: true });
-    } catch (err) {
-      console.error(`[store] failed to remove pool sidecar for ${s.code}:`, err);
-    }
+    this.persist(`failed to remove pool for ${s.code}`, () =>
+      this.backend.deletePool(s.code)
+    );
     this.touch(s);
   }
 
@@ -530,4 +639,30 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
-export const store = new SessionStore();
+/** Clamp/normalize every config field to its legal range. */
+function sanitizeConfig(next: DraftConfig): DraftConfig {
+  next = { ...next };
+  next.rounds = clamp(Math.round(next.rounds), 1, 30);
+  next.secondsPerPick = clamp(Math.round(next.secondsPerPick), 0, 600);
+  if (next.draftStyle !== "snake" && next.draftStyle !== "linear")
+    next.draftStyle = "snake";
+  if (next.mode !== "commissioner" && next.mode !== "self")
+    next.mode = "commissioner";
+  next.leagueName = (next.leagueName || "Fantasy Draft").slice(0, 60);
+  next.sounds = Boolean(next.sounds);
+  next.announcementVisual = Boolean(next.announcementVisual);
+  next.announcementSound = Boolean(next.announcementSound);
+  next.announcementSeconds = clamp(Math.round(next.announcementSeconds), 1, 30);
+  next.revealVisual = Boolean(next.revealVisual);
+  next.revealSound = Boolean(next.revealSound);
+  next.revealSeconds = clamp(Math.round(next.revealSeconds), 3, 60);
+  next.showPositionRuns = Boolean(next.showPositionRuns);
+  next.showValueBadges = Boolean(next.showValueBadges);
+  next.showOnDeck = Boolean(next.showOnDeck);
+  next.nsfw = Boolean(next.nsfw);
+  next.hurryUpButton = Boolean(next.hurryUpButton);
+  next.bruhButton = Boolean(next.bruhButton);
+  return next;
+}
+
+export const store = new SessionStore(createBackend());

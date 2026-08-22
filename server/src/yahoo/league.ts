@@ -7,8 +7,19 @@
 // a trailing `count`, resources are `[meta, { subResource }]` arrays, and
 // metadata is sometimes an array of single-key objects. We flatten as we go.
 
-import type { YahooLeagueSummary } from "../../../shared/types.js";
 import { yahooGet } from "./client.js";
+
+// One of the authorized Yahoo account's leagues. (This module needs OAuth API
+// access, which Yahoo gated behind per-app approval in mid-2026 — it's kept,
+// with its tests, as the resurrection path if the app is ever approved. The
+// wire types moved here from shared/types.d.ts when the import UI was removed.)
+export interface YahooLeagueSummary {
+  leagueKey: string; // e.g. "470.l.44749"
+  name: string;
+  season: string; // "2026"
+  numTeams: number;
+  scoringLabel: string; // "H2H" | "Points" | "Rotisserie" (from scoring_type)
+}
 
 // Yahoo NFL stat id for Receptions — its scoring modifier tells PPR vs standard.
 const RECEPTION_STAT_ID = 11;

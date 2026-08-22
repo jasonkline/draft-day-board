@@ -874,6 +874,45 @@ details[open] .extras-summary::before {
   display: flex;
   gap: 10px;
   margin: 12px 0;
+  flex-wrap: wrap;
+}
+.export-links {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+.play-done .export-links {
+  margin: 12px 0 0;
+}
+.paste-names {
+  margin-top: 12px;
+}
+.paste-names summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.paste-names-input {
+  width: 100%;
+  margin: 8px 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: inherit;
+  padding: 10px;
+  font: inherit;
+  resize: vertical;
+}
+.restore-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.restore-details input[type="file"] {
+  margin-top: 8px;
+  max-width: 100%;
 }
 .complete-banner,
 .play-done {

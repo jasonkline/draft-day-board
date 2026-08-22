@@ -9,8 +9,14 @@ import type {
   ServerToClientEvents,
 } from "../../shared/types.js";
 import { registerSocketHandlers } from "./socket.js";
-import { store } from "./store.js";
+import { store, type InternalSession } from "./store.js";
 import { buildDraftExport } from "./yahoo/export.js";
+import {
+  buildResultsCsv,
+  buildResultsJson,
+  resultsFilenameBase,
+} from "./results.js";
+import { RateLimiter } from "./ratelimit.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 4000;
@@ -77,6 +83,76 @@ app.post("/api/yahoo/export", express.json({ limit: "16kb" }), (req, res) => {
   res.json({ ok: true, export: buildDraftExport(s) });
 });
 
+// The HTTP endpoints below are code-addressed like the socket lookup events,
+// so give them the same enumeration throttle (per-IP token bucket).
+const httpLimiter = new RateLimiter(
+  Number(process.env.SESSION_LOOKUP_BURST) || 30,
+  Number(process.env.SESSION_LOOKUP_PER_SEC) || 1
+);
+function httpAllowed(req: express.Request, res: express.Response): boolean {
+  if (httpLimiter.allow(req.ip ?? "unknown")) return true;
+  res.status(429).json({ ok: false, error: "Too many requests — wait a moment and try again" });
+  return false;
+}
+
+// Draft results download (CSV or JSON). No token required: the board page
+// already shows every pick to anyone holding the join code. Mid-draft exports
+// are allowed on purpose — partial results are useful insurance.
+app.get("/api/export/:code", (req, res) => {
+  if (!httpAllowed(req, res)) return;
+  const s = store.get(req.params.code);
+  if (!s) return res.status(404).json({ ok: false, error: "Session not found" });
+  const players = store.playersFor(s);
+  const base = resultsFilenameBase(s);
+  if (req.query.format === "csv") {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${base}-results.csv"`);
+    res.send(buildResultsCsv(s, players));
+  } else {
+    res.setHeader("Content-Disposition", `attachment; filename="${base}-results.json"`);
+    res.json(buildResultsJson(s, players));
+  }
+});
+
+// Wipe insurance: full session backup, tokens and imported pool included —
+// admin-only. The token travels as a query param, matching the commissioner
+// link pattern (it's already a URL credential).
+app.get("/api/backup/:code", (req, res) => {
+  if (!httpAllowed(req, res)) return;
+  const s = store.get(req.params.code);
+  if (!s) return res.status(404).json({ ok: false, error: "Session not found" });
+  if (!store.isAdmin(s, typeof req.query.token === "string" ? req.query.token : undefined))
+    return res.status(403).json({ ok: false, error: "Not authorized" });
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="draft-backup-${s.code}.json"`
+  );
+  res.json({ ok: true, version: 1, session: s });
+});
+
+// Recreate a session from a backup file. Possession of the backup (it contains
+// the adminToken) is the credential; if the code is still live, the incoming
+// token must match so a restore can't hijack an existing session. The 2mb cap
+// comfortably covers the largest imported pool.
+app.post("/api/restore", express.json({ limit: "2mb" }), (req, res) => {
+  if (!httpAllowed(req, res)) return;
+  const { session } = (req.body ?? {}) as { session?: InternalSession };
+  if (!session || typeof session !== "object")
+    return res.status(400).json({ ok: false, error: "Missing session in backup" });
+  const existing = store.get(session.code ?? "");
+  if (existing && !store.isAdmin(existing, session.adminToken))
+    return res.status(403).json({ ok: false, error: "Not authorized" });
+  try {
+    const restored = store.restore(session);
+    res.json({ ok: true, code: restored.code });
+  } catch (err) {
+    res.status(400).json({
+      ok: false,
+      error: err instanceof Error ? err.message : "Invalid backup",
+    });
+  }
+});
+
 // Lock down what the app's pages may load/run: only our own scripts, images
 // from ourselves + the known player/team art CDNs (Yahoo, ESPN), and only
 // same-origin (or ws) connections. Inline styles stay allowed — React style
@@ -121,10 +197,22 @@ if (existsSync(clientDist)) {
   });
 }
 
+// Load persisted sessions (from Postgres when DATABASE_URL is set, else the
+// local data dir) before accepting any traffic. A rejection here (e.g. a bad
+// DATABASE_URL) crashes the boot on purpose — better a failed deploy than a
+// silently memory-only server.
+await store.init();
+
 httpServer.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[server] listening on http://localhost:${PORT}`);
   if (!existsSync(clientDist)) {
     console.log("[server] client/dist not found — run the Vite dev server separately.");
   }
+});
+
+// Render sends SIGTERM on every deploy and free-tier spin-down — land the
+// final debounced save before exiting.
+process.on("SIGTERM", () => {
+  void store.flushNow().finally(() => process.exit(0));
 });

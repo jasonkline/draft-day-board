@@ -228,7 +228,17 @@ function PlayerView({
       )}
 
       {state.status === "complete" && (
-        <div className="play-status play-done">🎉 Draft complete! Check your roster below.</div>
+        <div className="play-status play-done">
+          🎉 Draft complete! Check your roster below.
+          <div className="export-links">
+            <a className="btn btn-small" href={`/api/export/${state.code}?format=csv`} download>
+              📄 Results CSV
+            </a>
+            <a className="btn btn-small" href={`/api/export/${state.code}?format=json`} download>
+              🗂 Results JSON
+            </a>
+          </div>
+        </div>
       )}
 
       {state.status === "drafting" && (

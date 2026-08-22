@@ -5,7 +5,6 @@ import type {
   HeckleKind,
   Player,
   SessionState,
-  YahooLeagueSummary,
 } from "@shared/types";
 import { emit } from "../lib/socket";
 import { getAdminToken } from "../lib/storage";
@@ -108,53 +107,42 @@ function SetupView({
     );
   }
 
-  // ---- Yahoo league import ----
-  const [leagues, setLeagues] = useState<YahooLeagueSummary[] | null>(null);
-  const [leagueKey, setLeagueKey] = useState("");
-  const [findingLeagues, setFindingLeagues] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importMsg, setImportMsg] = useState("");
-
-  async function findLeagues() {
-    setFindingLeagues(true);
-    setImportMsg("");
-    const ack = await emit("admin:listYahooLeagues", { code, adminToken });
-    setFindingLeagues(false);
-    if (!ack.ok) {
-      setLeagues(null);
-      setImportMsg(`⚠️ ${ack.error || "Could not list leagues"}`);
-      return;
-    }
-    const found = ack.leagues ?? [];
-    setLeagues(found);
-    setLeagueKey(found[0]?.leagueKey ?? "");
-    if (found.length === 0) {
-      setImportMsg("No NFL leagues found for the authorized Yahoo account.");
-    }
-  }
-
-  async function importLeague() {
-    if (!leagueKey) return;
-    setImporting(true);
-    setImportMsg("");
-    const ack = await emit("admin:importYahooLeague", { code, adminToken, leagueKey });
-    setImporting(false);
-    if (!ack.ok || !ack.summary) {
-      setImportMsg(`⚠️ ${ack.error || "Import failed"}`);
-      return;
-    }
-    const s = ack.summary;
-    setImportMsg(
-      `✅ Imported “${s.leagueName}” — ${s.numTeams} teams, ${s.rounds} rounds, ` +
-        `${s.scoringLabel}. ${s.playerCount} players with league ADP.`
-    );
-  }
-
   const patchConfig = (patch: Partial<DraftConfig>) =>
     emit("admin:updateConfig", { code, adminToken, config: patch });
 
   const renameTeam = (id: string, name: string) =>
     emit("admin:updateTeams", { code, adminToken, teams: [{ id, name }] });
+
+  // ---- Paste-in team names (bulk rename, one per line) ----
+  const [pasteText, setPasteText] = useState("");
+  const [pasteMsg, setPasteMsg] = useState("");
+
+  async function applyPastedNames() {
+    const names = pasteText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (names.length === 0) {
+      setPasteMsg("Paste one team name per line first.");
+      return;
+    }
+    const updates = state.draftOrder
+      .slice(0, names.length)
+      .map((id, i) => ({ id, name: names[i].slice(0, 40) }));
+    const ack = await emit("admin:updateTeams", { code, adminToken, teams: updates });
+    if (!ack.ok) {
+      setPasteMsg(`⚠️ ${ack.error || "Rename failed"}`);
+      return;
+    }
+    const extra = names.length - updates.length;
+    setPasteMsg(
+      `✅ Renamed ${updates.length} team${updates.length === 1 ? "" : "s"}.` +
+        (extra > 0
+          ? ` ${extra} extra line${extra === 1 ? "" : "s"} ignored — this draft has ${state.teams.length} teams.`
+          : "")
+    );
+    setPasteText("");
+  }
 
   const setOrder = (order: string[]) =>
     emit("admin:setOrder", { code, adminToken, order });
@@ -304,63 +292,46 @@ function SetupView({
               );
             })}
           </ol>
+          <details className="paste-names">
+            <summary>📋 Paste team names</summary>
+            <p className="hint">
+              One name per line, applied top-to-bottom to the order above.
+            </p>
+            <textarea
+              className="paste-names-input"
+              rows={Math.min(10, state.teams.length)}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={"The Gridiron Gang\nBye Week Believers\n…"}
+            />
+            <button className="btn btn-small" onClick={applyPastedNames}>
+              Apply names
+            </button>
+            {pasteMsg && <p className="hint">{pasteMsg}</p>}
+          </details>
         </section>
 
         <section className="card">
           <h2>Share</h2>
           <ShareLinks code={code} />
-        </section>
-
-        <section className="card">
-          <h2>Import from Yahoo</h2>
-          <p className="hint">
-            Pull your real league: team names, roster size (rounds) &amp;
-            league-scoped ADP. Overwrites the teams &amp; rounds above. Draft
-            style stays as you set it.
+          <p className="hint" style={{ marginTop: "0.6rem" }}>
+            <a href={`/api/backup/${code}?token=${encodeURIComponent(adminToken)}`} download>
+              💾 Download backup
+            </a>{" "}
+            — a file that can restore this whole draft (keep it private, it
+            holds the control links).
           </p>
-          <button
-            className="btn btn-small"
-            onClick={findLeagues}
-            disabled={findingLeagues || importing}
-          >
-            {findingLeagues ? "Finding…" : "🔎 Find my leagues"}
-          </button>
-          {leagues && leagues.length > 0 && (
-            <div className="field" style={{ marginTop: "0.6rem" }}>
-              <span>League</span>
-              <select
-                value={leagueKey}
-                onChange={(e) => setLeagueKey(e.target.value)}
-                disabled={importing}
-              >
-                {leagues.map((l) => (
-                  <option key={l.leagueKey} value={l.leagueKey}>
-                    {l.name} · {l.season} · {l.numTeams}-team {l.scoringLabel}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="btn btn-small"
-                onClick={importLeague}
-                disabled={importing || !leagueKey}
-                style={{ marginTop: "0.6rem" }}
-              >
-                {importing ? "Importing…" : "⬇️ Import this league"}
-              </button>
-            </div>
-          )}
-          {importMsg && <p className="hint">{importMsg}</p>}
         </section>
 
         <section className="card">
           <h2>Player Data</h2>
           <p className="hint">
-            {state.players.length} players loaded. Pull the latest Yahoo rankings,
-            ADP &amp; injuries before you draft. This refreshes the universal pool;
-            a league you imported above keeps its own league-scoped ADP.
+            {state.players.length} players loaded. Pull the latest Yahoo
+            rankings &amp; ADP before you draft (uses Yahoo's public data — no
+            account needed).
           </p>
           <button className="btn btn-small" onClick={refreshPlayers} disabled={refreshing}>
-            {refreshing ? "Refreshing…" : "↻ Refresh from Yahoo"}
+            {refreshing ? "Refreshing…" : "↻ Refresh player data"}
           </button>
           {refreshMsg && <p className="hint">{refreshMsg}</p>}
         </section>
@@ -719,6 +690,14 @@ function DraftView({
       {isComplete ? (
         <>
           <div className="complete-banner">🎉 Draft complete! {state.totalPicks} picks made.</div>
+          <div className="export-links">
+            <a className="btn btn-small" href={`/api/export/${code}?format=csv`} download>
+              📄 Download results (CSV)
+            </a>
+            <a className="btn btn-small" href={`/api/export/${code}?format=json`} download>
+              🗂 Download results (JSON)
+            </a>
+          </div>
           <YahooExportPanel state={state} code={code} adminToken={adminToken} />
         </>
       ) : (
@@ -762,6 +741,13 @@ function DraftView({
         >
           ↩︎ Undo last pick
         </button>
+        <a
+          className="btn btn-small"
+          href={`/api/backup/${code}?token=${encodeURIComponent(adminToken)}`}
+          download
+        >
+          💾 Backup
+        </a>
       </div>
 
       {canHeckle && (

@@ -14,6 +14,32 @@ export function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  async function restoreBackup(file: File) {
+    setBusy(true);
+    setError("");
+    try {
+      const backup = JSON.parse(await file.text());
+      const res = await fetch("/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(backup),
+      });
+      const ack = await res.json();
+      if (!ack.ok) {
+        setError(ack.error || "Restore failed");
+        return;
+      }
+      // The backup carries the admin token — make this device commissioner.
+      const token = backup?.session?.adminToken;
+      if (typeof token === "string") saveAdminToken(ack.code, token);
+      navigate(`/admin/${ack.code}`);
+    } catch {
+      setError("That doesn't look like a draft backup file");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createDraft() {
     unlockAudio();
     setBusy(true);
@@ -90,6 +116,24 @@ export function Home() {
           <p className="hint">
             You'll become the commissioner and set up teams, order &amp; rules next.
           </p>
+          <div className="divider" />
+          <details className="restore-details">
+            <summary>💾 Restore from a backup file</summary>
+            <p className="hint">
+              Bring a draft back exactly as it was — teams, picks &amp; control
+              links — from a backup downloaded on the commissioner screen.
+            </p>
+            <input
+              type="file"
+              accept="application/json,.json"
+              disabled={busy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void restoreBackup(f);
+                e.target.value = "";
+              }}
+            />
+          </details>
         </section>
 
         <section className="card">

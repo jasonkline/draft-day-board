@@ -1,14 +1,27 @@
 // Fetch the NFL player pool from Yahoo and map it into our `Player` shape.
 //
-// Yahoo's JSON is awkward: collections are objects keyed by numeric strings with
-// a trailing `count`, and each player's metadata is an array of single-key
-// objects. We flatten those into plain maps before reading fields.
+// Since Yahoo gated the OAuth Fantasy API behind per-app approval (mid-2026),
+// this pulls from `pub-api-ro.fantasysports.yahoo.com` instead — the host
+// Yahoo's own Draft Analysis pages read from, which serves the same API with
+// no auth at all. It only exposes public/global data (league-scoped ADP still
+// needs OAuth), which is exactly what the player pool needs. `format=json_f`
+// gives object-style JSON, so no array-of-single-key-objects flattening dance.
 
 import type { Player, PlayerPosition } from "../../../shared/types.js";
-import { yahooGet } from "./client.js";
 
 const OUR_POSITIONS: PlayerPosition[] = ["QB", "RB", "WR", "TE", "K", "DEF"];
 const PAGE_SIZE = 25; // Yahoo caps players collections at 25 per request.
+
+const PUBLIC_API = "https://pub-api-ro.fantasysports.yahoo.com/fantasy/v2";
+// "nfl.l.public" resolves to the current season's public league (e.g.
+// 470.l.101 in 2026), so this never needs a yearly game-id bump.
+const PUBLIC_LEAGUE = "nfl.l.public";
+
+async function publicGet(path: string): Promise<any> {
+  const res = await fetch(`${PUBLIC_API}/${path}?format=json_f`);
+  if (!res.ok) throw new Error(`Yahoo public API ${res.status} for ${path}`);
+  return res.json();
+}
 
 /** Merge an array of single-key objects (Yahoo's metadata style) into one map. */
 function flatten(arr: unknown): Record<string, any> {
@@ -69,74 +82,59 @@ interface RawPlayer {
   playerKey?: string; // Yahoo player key, e.g. "nfl.p.40055"
 }
 
-/** Map one Yahoo `player` entry (array form) into our intermediate shape. */
-function mapRawPlayer(entry: any): RawPlayer | null {
-  // entry.player is [ metaArray, {draft_analysis}, {ownership}, ... ]
-  const parts: any[] = entry?.player;
-  if (!Array.isArray(parts) || parts.length === 0) return null;
+/** Map one `json_f` player object into our intermediate shape. */
+function mapRawPlayer(p: any): RawPlayer | null {
+  if (!p || typeof p !== "object") return null;
 
-  const meta = flatten(parts[0]);
-  const position = mapPosition(meta);
+  const position = mapPosition(p);
   if (!position) return null; // skip IDP / non-fantasy positions
 
-  const name =
-    flatten(meta.name).full ?? (typeof meta.name === "string" ? meta.name : null);
+  const name = typeof p.name?.full === "string" ? p.name.full : null;
   if (!name) return null;
 
-  const nflTeam = String(meta.editorial_team_abbr ?? "FA").toUpperCase();
-  const byeWeek = Number(flatten(meta.bye_weeks).week ?? 0) || 0;
-  // Yahoo's canonical player key (e.g. "nfl.p.40055"); its numeric suffix is the
-  // `pid` the offline-draft results form expects when pushing picks back to Yahoo.
-  const playerKey = typeof meta.player_key === "string" ? meta.player_key : undefined;
+  const nflTeam = String(p.editorial_team_abbr ?? "FA").toUpperCase();
+  const byeWeek = Number(p.bye_weeks?.week ?? 0) || 0;
+  // Yahoo's canonical player key ("nfl.p.40055"); its numeric suffix is the
+  // `pid` the offline-draft results form expects when pushing picks back to
+  // Yahoo. Prefer editorial_player_key — in a league context, player_key is
+  // prefixed with the season's game id ("470.p.40055") instead of "nfl".
+  const playerKey =
+    typeof p.editorial_player_key === "string"
+      ? p.editorial_player_key
+      : typeof p.player_key === "string"
+        ? p.player_key
+        : undefined;
 
   const headshotUrl = unwrapHeadshot(
-    flatten(meta.headshot).url ??
-      (typeof meta.image_url === "string" ? meta.image_url : undefined)
+    typeof p.headshot?.url === "string"
+      ? p.headshot.url
+      : typeof p.image_url === "string"
+        ? p.image_url
+        : undefined
   );
 
-  // draft_analysis / ownership live in the sibling objects of the player array.
-  let adp: number | null = null;
-  let percentDrafted: number | null = null;
-  for (let i = 1; i < parts.length; i++) {
-    const obj = parts[i];
-    if (obj && typeof obj === "object" && "draft_analysis" in obj) {
-      const da = flatten(obj.draft_analysis);
-      const ap = parseFloat(da.average_pick);
-      adp = Number.isFinite(ap) && ap > 0 ? ap : null;
-      const pd = parseFloat(da.percent_drafted);
-      percentDrafted = Number.isFinite(pd) ? pd : null;
-    }
-  }
+  const da = p.draft_analysis ?? {};
+  const ap = parseFloat(da.average_pick);
+  const adp = Number.isFinite(ap) && ap > 0 ? ap : null;
+  const pd = parseFloat(da.percent_drafted);
+  const percentDrafted = Number.isFinite(pd) ? pd : null;
 
   return { name, position, nflTeam, byeWeek, adp, percentDrafted, headshotUrl, playerKey };
 }
 
-/**
- * Pull one page of a single position, sorted by Yahoo's overall rank. With a
- * `leagueKey`, the players are scoped to that league (`status=ALL` to include
- * already-drafted players) so the `draft_analysis` ADP reflects the league's
- * real settings (team count + PPR/standard) rather than Yahoo's global average.
- */
+/** Pull one page of a single position, sorted by Yahoo's overall rank. */
 async function fetchPage(
   position: PlayerPosition,
-  start: number,
-  leagueKey?: string
+  start: number
 ): Promise<RawPlayer[]> {
-  const base = leagueKey ? `league/${leagueKey}` : "game/nfl";
-  const status = leagueKey ? ";status=ALL" : "";
-  const path = `${base}/players;position=${position};start=${start};count=${PAGE_SIZE}${status};sort=OR;out=draft_analysis,ownership`;
-  const data = await yahooGet(path);
-  // game queries nest players under `game`, league queries under `league`.
-  const container = data?.fantasy_content?.league ?? data?.fantasy_content?.game;
-  const playersObj = Array.isArray(container)
-    ? container.find((g: any) => g && typeof g === "object" && "players" in g)?.players
-    : undefined;
-  if (!playersObj) return [];
+  const path = `league/${PUBLIC_LEAGUE}/players;position=${position};start=${start};count=${PAGE_SIZE};sort=OR/draft_analysis`;
+  const data = await publicGet(path);
+  const players = data?.fantasy_content?.league?.players;
+  if (!Array.isArray(players)) return [];
 
   const raws: RawPlayer[] = [];
-  for (const key of Object.keys(playersObj)) {
-    if (key === "count") continue;
-    const mapped = mapRawPlayer(playersObj[key]);
+  for (const entry of players) {
+    const mapped = mapRawPlayer(entry?.player ?? entry);
     if (mapped) raws.push(mapped);
   }
   return raws;
@@ -182,11 +180,6 @@ export interface FetchPoolOptions {
   maxPerPosition?: number;
   /** Optional progress logger. */
   onProgress?: (msg: string) => void;
-  /**
-   * Scope the pull to a specific Yahoo league so ADP reflects that league's
-   * settings (team count + PPR/standard). Omit for Yahoo's global game pool.
-   */
-  leagueKey?: string;
 }
 
 /**
@@ -204,7 +197,7 @@ export async function fetchPlayerPool(opts: FetchPoolOptions = {}): Promise<Play
   for (const position of OUR_POSITIONS) {
     let got = 0;
     for (let start = 0; start < maxPerPosition; start += PAGE_SIZE) {
-      const page = await fetchPage(position, start, opts.leagueKey);
+      const page = await fetchPage(position, start);
       candidates.push(...page);
       got += page.length;
       if (page.length < PAGE_SIZE) break; // ran out of players for this position
